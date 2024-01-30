@@ -1,0 +1,63 @@
+{
+  "LMSSettings": {
+    "LMSUrl": "https://class.jhu.edu.ng",
+    "LMSToken": "b518381f52382ff8000fe176470f122b",
+    "ProfileWSfunction": "core_user_create_users",
+    "CreatePassword": "1",
+    "MailDisplay": "1",
+    "IdNumber": ""
+  },
+  "LMSRegistration": {
+    "LMSUrl": "https://class.jhu.edu.ng",
+    "LMSRegistrationToken": "b518381f52382ff8000fe176470f122b",
+    "ProfileWSfunction": "enrol_manual_enrol_users",
+    "RoleID": "5",
+    "Moodlewsrestformat": "json",
+    "CurrentYearId": "23",
+    "CurrentSemesterId": "1"
+
+  },
+  "LMSCreateCourse": {
+    "LMSUrl": "https://class.jhu.edu.ng",
+    "LMSToken": "b518381f52382ff8000fe176470f122b",
+    "WSfunction": "core_course_create_courses",
+    "CategoryId": "10",
+    "StartDate": "2023-08-27",
+    "EndDate": "2024-02-28",
+    "Moodlewsrestformat": "json"
+  },
+  //"ERPSettings": {
+  //"AuthRUL": "https://41.138.161.33:50000/b1s/v1/Login",
+  //"https": null, //41.138.161.33:50000/b1s/v1/Login
+  //"UserName": "eduportal",
+  //"Passw": "Pass@123",
+  //"CompanyDb": "JHUTEST",
+  //"I nvoiceEndPoint": "https://41.138.161.33:50000/b  1s/v1/Invoices",
+  //"PaymentEndPoint": "https://41.138.161.33:50000/b1s/v1/IncomingPayments"
+
+  "ERPSettings": {
+    "AuthRUL": "https://41.138.161.33:50000/b1s/v1/Login",    
+    "https": null, //41.138.161.33:50000/b1s/v1/Login
+    "UserName": "eduportal",
+    "Passw": "P@ss$101",
+    "CompanyDb": "JHU_DB",
+    "BPCodeApplicant": "APP001",
+    "BPCodeMasters": "MSTD001",
+    "BPCodePG": "PGST001",
+    "InvoiceEndPoint": "https://41.138.161.33:50000/b1s/v1/Invoices",
+    "PaymentEndPoint": "https://41.138.161.33:50000/b1s/v1/IncomingPayments"
+
+  },
+  "AppSettings": {
+     
+    "Organization": "James Hope University"
+
+  },
+  "ConnectionString": {
+    //"connectionstring": "Server= 174.142.93.40;User id=admin1; TrustServerCertificate = True; Password=cy#$89pawer;database=JHU_PortalDatabase"
+    "connectionstring": "Server= 174.142.93.40;User id=eduteam; TrustServerCertificate = True; Password=edu$123team;database=JHU_PortalDatabase"
+
+  }
+
+}
+ 
