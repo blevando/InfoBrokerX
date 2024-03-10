@@ -581,9 +581,6 @@
                 _log4net.Error($"Error in Vote Count Update {ex.Message}");
             }
 
-
-
-
         }
 
         private static void SendEmail(object? obj)
@@ -694,10 +691,6 @@
 
                         Thread.Sleep(1000);
                     }
-
-
-
-
 
                     _log4net.Info($"Course Creator Broker firing {DateTime.Now.ToString("yyyy-MM-dd hh:mm:ss.fff")}");
 
