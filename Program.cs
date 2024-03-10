@@ -257,8 +257,6 @@
                         }
 
                          
-                         
-
 
                         Thread.Sleep(20000);
                     }
@@ -469,9 +467,6 @@
                 _log4net.Error($"Error in Creating Candidate {ex.Message}");
             }
         }
-
-
-
 
 
         private static void UpdateVoteCountHandler(object? obj)
