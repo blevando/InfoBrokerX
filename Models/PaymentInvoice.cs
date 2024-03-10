@@ -6,7 +6,7 @@ using System.Reflection;
 using System.Text;
 using System.Threading.Tasks;
 
-namespace InfoBroker.Models
+namespace CIPMBroker.Models
 {
     public class PaymentInvoice
     {

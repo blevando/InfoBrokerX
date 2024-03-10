@@ -6,7 +6,7 @@ using System.Linq;
 using System.Text;
 using System.Threading.Tasks;
 
-namespace InfoBroker.Models
+namespace CIPMBroker.Models
 {
     public class DocumentLines
     {

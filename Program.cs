@@ -1,6 +1,6 @@
-﻿namespace InfoBroker
+﻿namespace CIPMBroker
 {
-    using InfoBroker.Models;
+    using CIPMBroker.Models;
     using log4net;
     using log4net.Config;
     using Microsoft.Extensions.Configuration;
@@ -10,10 +10,14 @@
     using Newtonsoft.Json;
     using Newtonsoft.Json.Linq;
     using RestSharp; // Nugget Version = 105.2.3 - This is what worked
+    using System;
     //using RestSharp.Authenticators;
     using System.Collections;
+    using System.Collections.Specialized;
     using System.Data;
     using System.Data.SqlClient;
+    using System.Diagnostics;
+    using System.Diagnostics.Eventing.Reader;
     using System.Net;
     using System.Net.NetworkInformation;
     using System.Net.Security;
@@ -50,24 +54,30 @@
             var logRepository = LogManager.GetRepository(Assembly.GetEntryAssembly());
             XmlConfigurator.Configure(logRepository, new FileInfo("Log4Net.config"));
 
-            var configBuilder = new ConfigurationBuilder().AddJsonFile("Settings.json").Build();        
+            var configBuilder = new ConfigurationBuilder().AddJsonFile("Settings.json").Build();
             var configsession = configBuilder.GetSection("AppSettings");
             string organizationName = configsession.GetSection("Organization").Value.Trim();
 
-            Console.Title = $"InfoBroker for {organizationName} runing since {DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss")}";
+            Console.Title = $"CIPMBroker for {organizationName} runing since {DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss")}";
 
             _log4net.Info(organizationName);
 
             Thread Credentials = null;
 
-            Thread UpdatePayment = null;
+
 
             Thread RegisterStudents = null;
 
-            Thread Email = null;
-            Thread CreateCourse;
 
+            Thread CreateCourse = null;
 
+            Thread UpdateVoteCount = null;
+
+            Thread CreateGrading = null;
+
+            Thread CreateCandidate = null;
+
+            //Thread Email = null;
             //Thread updateDepartments;
 
             //Thread updateFaculties;
@@ -75,34 +85,41 @@
             //Thread UpdatePrograms;
 
 
-
-            // This tread is for ....
             Credentials = new Thread(new ParameterizedThreadStart(CredentialsHandler));
-            Credentials.Start();
-            Interlocked.Increment(ref threadCount);
-
-
-
-            UpdatePayment = new Thread(new ParameterizedThreadStart(PaymentUpdateHandler));
-            UpdatePayment.Start();
+           // Credentials.Start();
             Interlocked.Increment(ref threadCount);
 
             RegisterStudents = new Thread(new ParameterizedThreadStart(CourseRegistrationHandler));
-            RegisterStudents.Start();
+            //RegisterStudents.Start();
             Interlocked.Increment(ref threadCount);
-
 
 
             CreateCourse = new Thread(new ParameterizedThreadStart(CreateCourseHandler));
-            CreateCourse.Start();
+           // CreateCourse.Start();
+            Interlocked.Increment(ref threadCount);
 
+            UpdateVoteCount = new Thread(new ParameterizedThreadStart(UpdateVoteCountHandler));
+            //UpdateVoteCount.Start();
+            Interlocked.Increment(ref threadCount);
 
+            CreateGrading = new Thread(new ParameterizedThreadStart(CreateGradingHandler));
+            CreateGrading.Start();
+            Interlocked.Increment(ref threadCount);
+
+            CreateCandidate = new Thread(new ParameterizedThreadStart(CreateCandidateHandler));
+            //CreateCandidate.Start();
             Interlocked.Increment(ref threadCount);
 
 
+            //UpdatePayment = new Thread(new ParameterizedThreadStart(PaymentUpdateHandler));
+            //UpdatePayment.Start();
+            //Interlocked.Increment(ref threadCount);
+
+
+
             //Email = new Thread(new ParameterizedThreadStart(SendEmail));
-           // Email.Start();
-           // Interlocked.Increment(ref threadCount);
+            // Email.Start();
+            // Interlocked.Increment(ref threadCount);
 
 
             //updateDepartments = new Thread(new ParameterizedThreadStart(DepartmentHandler));
@@ -124,10 +141,453 @@
             while (!isApplicationProcessing == false)
 
             {
-                _log4net.Info($"Main Tread is running {DateTime.Now.ToString("yyyy-MM-dd hh:mm:ss.fff")}");
-                
+                _log4net.Info($"Main Thread is running {DateTime.Now.ToString("yyyy-MM-dd hh:mm:ss.fff")}");
+
                 Thread.Sleep(3000);
             }
+
+        }
+
+        private static void CreateGradingHandler(object? obj)
+        {
+
+
+            var configBuilder = new ConfigurationBuilder().AddJsonFile("Settings.json").Build();
+            var configsession = configBuilder.GetSection("ConnectionString");
+
+            string connectionstring = configsession.GetSection("connectionstring").Value.Trim();
+
+            SqlConnection cnn = new SqlConnection(connectionstring);
+
+
+
+            try
+            {
+                cnn.Open();
+
+                while (!isApplicationProcessing == false)
+
+                {
+                    if (cnn.State == ConnectionState.Open)
+                    {
+                        // first update the table
+
+
+                        SqlCommand cmd = new SqlCommand("select E.Id,  c.provisionedid as courseId, E.provisionedid as userid from ExamCourses c, ExamEnrollments E where e.examCode = c.examCode and E.ActiveStatus=0 and e.isProvisioned=1", cnn);
+                        SqlDataReader dr = cmd.ExecuteReader();
+
+                       
+                        if (dr.HasRows == true)
+                        {
+                            List<EnrolledUserDTO> enrolledUsers = new List<EnrolledUserDTO>();
+
+                            while (dr.Read() == true)
+                            {
+                                EnrolledUserDTO user = new EnrolledUserDTO();
+                                user.Id = int.Parse(dr.GetValue(0).ToString());
+                                user.CourseId= int.Parse(dr.GetValue(1).ToString());
+                                user.UserId = int.Parse(dr.GetValue(2).ToString());
+
+                                enrolledUsers.Add(user);
+
+                            }
+
+                            dr.Close();
+                            cmd.Dispose();
+
+
+                            if (enrolledUsers.Count > 0)
+                            {
+                                GetRawGradeProfile profile = GetGradeProfile();
+
+                                foreach (EnrolledUserDTO enrolleduser in enrolledUsers)
+                                {
+
+                                    //Create a profile 
+                                    //Call LMS to get rawgrades
+                                    // serriallize it, 
+                                    // Update the examenrollments table
+
+
+                                    profile.UserId = enrolleduser.UserId.ToString();
+
+                                    List<GradeDetail> gradeDetails = new List<GradeDetail>();
+
+                                      gradeDetails = FetchGrade(profile);
+
+                                    if (gradeDetails != null)
+                                    {
+
+
+                                        foreach (GradeDetail gradeDetail in gradeDetails)
+                                        {
+
+                                            switch (gradeDetail.Grade)
+                                            {
+
+                                                case "-":
+                                                    break; // do nothing there is no grade rawgrade is also null at this point
+
+                                                default:
+
+                                                    if (enrolleduser.CourseId == gradeDetail.CourseId && enrolleduser.UserId.ToString() == profile.UserId)
+                                                    {
+
+                                                        cmd = new SqlCommand($"Update ExamEnrollments set [Score] = {gradeDetail.Grade},[RawScore]={gradeDetail.RawGrade} where [Id] ={enrolleduser.Id}", cnn);
+                                                        cmd.ExecuteNonQuery();
+                                                        cmd.Dispose();
+                                                        _log4net.Info($"Scores {profile.UserId} are: Grade: {gradeDetail.Grade}, RawGrade={gradeDetail.RawGrade}");
+                                                    }
+
+                                                    break;
+
+                                            }
+
+                                        }
+
+
+                                    }       
+
+                                       
+                                     
+                                }
+                            }
+
+
+                        }
+
+                         
+                         
+
+
+                        Thread.Sleep(20000);
+                    }
+                    else
+                    {
+                        try
+                        {
+                            cnn.Dispose();
+                            cnn.Close();
+                            cnn.Open();
+                            _log4net.Info("Previous connection expired and was reestablished");
+
+                        }
+                        catch (Exception xe)
+                        {
+                            _log4net.Error(xe.Message);
+                        }
+
+                        Thread.Sleep(1000);
+                    }
+
+                    _log4net.Info($"Registration Broker firing {DateTime.Now.ToString("yyyy-MM-dd hh:mm:ss.fff")}");
+
+                    Thread.Sleep(3000);
+                }
+
+            }
+            catch (Exception xe)
+            {
+                _log4net.Error(xe.Message);
+            }
+        }
+
+        private static List<GradeDetail> FetchGrade(GetRawGradeProfile profile)
+        {
+
+            HttpClient client = new HttpClient();
+            GradesResponse gradesResponse = new GradesResponse();
+            string apiUrl = $@"{profile.LMSUrl}/webservice/rest/server.php?wstoken={profile.wstoken}&wsfunction={profile.wsfunction}&moodlewsrestformat={profile.moodlewsrestformat}&userid={profile.UserId}";
+
+
+            var request = new HttpRequestMessage(HttpMethod.Get, apiUrl);
+            var response = client.SendAsync(request).GetAwaiter().GetResult();
+            response.EnsureSuccessStatusCode();
+
+            var ProfileTransmitedFeedBack = response.Content.ReadAsStringAsync().GetAwaiter().GetResult();
+
+            string aa = ProfileTransmitedFeedBack.ToString().Replace("null","--");
+            //if (ProfileTransmitedFeedBack.ToString() == "[]")
+            //{
+
+            try
+            { 
+                
+                     gradesResponse = JsonConvert.DeserializeObject<GradesResponse>(ProfileTransmitedFeedBack);
+                                  
+
+            }
+            catch (Exception xe)
+            {
+                _log4net.Error(xe.Message);
+            }
+
+            return gradesResponse.Grades;
+        }
+
+        private static GetRawGradeProfile GetGradeProfile()
+        {
+
+            GetRawGradeProfile profile = new GetRawGradeProfile();
+
+            var configBuilder = new ConfigurationBuilder().AddJsonFile("Settings.json").Build();
+            var configsession = configBuilder.GetSection("LMSGetGrade");
+ 
+
+            profile.wstoken = configsession.GetSection("LMSToken").Value.Trim();
+
+            profile.LMSUrl = configsession.GetSection("LMSUrl").Value.Trim();
+
+            profile.wsfunction = configsession.GetSection("WSfunction").Value.Trim();
+
+            profile.moodlewsrestformat = configsession.GetSection("Moodlewsrestformat").Value.Trim();
+
+
+            return profile;
+
+
+        }
+
+        private static void CreateCandidateHandler(object? obj)
+        {
+            _log4net.Info("Create Candidate Module fired");
+
+            var configBuilder = new ConfigurationBuilder().AddJsonFile("Settings.json").Build();
+            var configsession = configBuilder.GetSection("ConnectionString");
+
+            string connectionstring = configsession.GetSection("connectionstring").Value.Trim();
+
+            SqlConnection cnn = new SqlConnection(connectionstring);
+            cnn.Open();
+
+            try
+            {
+
+                while (!isApplicationProcessing == false)
+
+                {
+                    if (cnn.State == ConnectionState.Open)
+                    {
+                        string currentTimeStamp = DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss.fff");
+
+                        SqlCommand cmd = new SqlCommand($"select [Id] from  [AnnualElectionSetups] where [IsActive]=1 and '{currentTimeStamp}' between [OpenBallotStartDate] and  [OpenBallotEndDate]", cnn);
+
+                        SqlDataReader dr = cmd.ExecuteReader();
+
+                        string currentElectionId = string.Empty;
+                        bool activeElectionExist = false;
+                        if (dr.HasRows == true)
+                        {
+
+                            if (dr.Read() == true)
+                            {
+                                currentElectionId = int.Parse(dr.GetValue(0).ToString()).ToString();
+
+                                activeElectionExist = true;
+
+                            }
+                        }
+
+                        dr.Close();
+                        cmd.Dispose();
+
+                        if (activeElectionExist != false)
+                        {
+
+                            cmd = new SqlCommand("Select ElectionId, NomineeId,Id from Nominations where ApprovalStatus='Approved' and Inserted=0", cnn);
+                            dr = cmd.ExecuteReader();
+                            if (dr.HasRows == true)
+                            {
+                                HybridDictionary hb = new HybridDictionary();
+                                List<string> ids = new List<string>();
+
+                                while (dr.Read())
+                                {
+                                    hb.Add(dr.GetString(1), int.Parse(dr.GetValue(0).ToString()));
+                                    ids.Add(dr.GetValue(2).ToString());
+                                }
+
+                                if (hb.Count > 0)
+                                {
+                                    dr.Close();
+                                    cmd.Dispose();
+
+                                    foreach (string nomi in hb.Keys)
+
+                                    {
+
+                                        //cmd = new SqlCommand($"Insert into Candidates(ElectionId,CandidateId, Candidate,Position,Comment, ActiveStatus, Manifesto,Passport,Youtube, Email,PhoneNumber,Gender,MembershipGrade, CreatedDate)Select ElectionId, NomineeId, Nominee,Position,Comment, ActiveStatus, Manifesto,Passport,YouTube, NomineeEmail,NomineePhone,Gender,MembershipGrade, CreatedDate from Nominations where ApprovalStatus='Approved' and  ActiveStatus=1", cnn);
+                                        cmd = new SqlCommand($"if not Exists (Select ElectionId, CandidateId from Candidates where ElectionId={hb[nomi]} and CandidateId='{nomi}')  Insert into Candidates(ElectionId,CandidateId, Candidate,Position,Comment, ActiveStatus, Manifesto,Passport, Youtube, Email,PhoneNumber,Gender,MembershipGrade, CreatedDate)Select ElectionId, NomineeId, Nominee,Position,Comment, ActiveStatus, Manifesto,Passport, Youtube, NomineeEmail,NomineePhone,Gender,MembershipGrade, CreatedDate from Nominations where ApprovalStatus='Approved'and ActiveStatus=1 and NomineeId='{nomi}' and ElectionId= {hb[nomi]}", cnn);
+                                        cmd.ExecuteNonQuery();
+
+                                    }
+                                    dr.Close();
+                                    cmd.Dispose();
+                                    if (ids.Count > 0)
+                                    {
+                                       // string a = ids.Aggregate((a, b) => ($"{a}, {b}"));
+
+                                            cmd = new SqlCommand($"Update Nominations Set Inserted=1 where Id in ( {ids.Aggregate((a, b) => ($"{a}, {b}"))} )", cnn);
+                                            cmd.ExecuteNonQuery();
+ 
+                                        cmd.Dispose();
+
+                                    }
+                                    // set inserted = 1 in nomineeTable
+
+                                }
+
+
+                            }
+
+
+                            dr.Close();
+                            cmd.Dispose();
+
+
+                        }
+                        cmd.Dispose();
+
+                        Thread.Sleep(20000);
+
+                    }
+
+                    else
+                    {
+                        cnn.Dispose();
+                        cnn.Close();
+                        Thread.Sleep(20000);
+                        cnn = new SqlConnection(connectionstring);
+                        cnn.Open();
+
+                    }
+                }
+            }
+
+            catch (Exception ex)
+            {
+                _log4net.Error($"Error in Creating Candidate {ex.Message}");
+            }
+        }
+
+
+
+
+
+        private static void UpdateVoteCountHandler(object? obj)
+        {
+            _log4net.Info("Election Update Module fired");
+
+            var configBuilder = new ConfigurationBuilder().AddJsonFile("Settings.json").Build();
+            var configsession = configBuilder.GetSection("ConnectionString");
+
+            string connectionstring = configsession.GetSection("connectionstring").Value.Trim();
+
+            SqlConnection cnn = new SqlConnection(connectionstring);
+            cnn.Open();
+
+            try
+            {
+
+                while (!isApplicationProcessing == false)
+
+                {
+                    if (cnn.State == ConnectionState.Open)
+                    {
+                        string currentTimeStamp = DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss.fff");
+
+                        SqlCommand cmd = new SqlCommand($"select [Id] from  [AnnualElectionSetups] where [IsActive]=1 and '{currentTimeStamp}' between [VotingStartDate] and  [VotingEndDate]", cnn);
+
+                        SqlDataReader dr = cmd.ExecuteReader();
+
+                        string currentElectionId = string.Empty;
+                        bool activeElectionExist = false;
+                        if (dr.HasRows == true)
+                        {
+
+                            if (dr.Read() == true)
+                            {
+                                currentElectionId = int.Parse(dr.GetValue(0).ToString()).ToString();
+                                activeElectionExist = true;
+
+                            }
+                        }
+
+                        dr.Close();
+                        cmd.Dispose();
+
+                        if (activeElectionExist != false)
+                        {
+
+                            cmd = new SqlCommand($"select C.Position, C.CandidateId, count (V.token) as nCount from Candidates C full outer join Votes V on C.ElectionId = V.ElectionId and  C.Position=V.Position and C.CandidateId = V.CandidateId where  C.ElectionId={currentElectionId} group by C.Position, C.CandidateId", cnn);
+                            dr = cmd.ExecuteReader();
+
+                            List<VoteAggregate> aggregates = new List<VoteAggregate>();
+                            if (dr.HasRows == true)
+                            {
+                                VoteAggregate results = null;
+                                while (dr.Read() == true)
+                                {
+                                    results = new VoteAggregate();
+                                    results.ElectionId = currentElectionId;
+                                    results.Position = dr.GetString(0);
+                                    results.CandidateId = dr.GetString(1);
+                                    results.VoteCount = int.Parse(dr.GetValue(2).ToString());
+
+                                    aggregates.Add(results);
+                                }
+
+                            }
+
+                            dr.Close();
+                            cmd.Dispose();
+
+
+                            if (aggregates.Count > 0)
+                            {
+                                foreach (VoteAggregate aggregate in aggregates)
+                                {
+                                    // Update candidate table
+                                    cmd = new SqlCommand($"update candidates set VoteCount = {aggregate.VoteCount} where ElectionId = {aggregate.ElectionId} and Position = '{aggregate.Position}' and CandidateId = '{aggregate.CandidateId}'", cnn);
+                                    cmd.ExecuteNonQuery();
+
+                                }
+
+                                if (aggregates.Count == 1)
+                                {
+                                    _log4net.Info($"Successfully updated vote for a candidate");
+                                }
+                                else
+                                {
+                                    _log4net.Info($"Successfully updated votes for {aggregates.Count} candidates");
+                                }
+
+                            }
+                            cmd.Dispose();
+
+                        }
+
+                        Thread.Sleep(20000);
+
+                    }
+                    else
+                    {
+                        cnn.Dispose();
+                        cnn.Close();
+                        Thread.Sleep(20000);
+                        cnn = new SqlConnection(connectionstring);
+                        cnn.Open();
+
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                _log4net.Error($"Error in Vote Count Update {ex.Message}");
+            }
+
+
+
 
         }
 
@@ -157,8 +617,7 @@
                     if (cnn.State == ConnectionState.Open)
                     {
 
-                        SqlCommand cmd = new SqlCommand("Select [srn],[CourseCode], [CourseTitle],[YearId],[SemesterId] from [EduCourseSchedule] where [isTransmitedToLMS]=0", cnn);
-
+                        SqlCommand cmd = new SqlCommand("select [Id],[ExamCode],[ExamTitle] from  [ExamCourses] where [Provisioned]=0 and [ActiveStatus]=1", cnn);
 
                         SqlDataReader dr = cmd.ExecuteReader();
                         List<CourseSchedule> schedules = new List<CourseSchedule>();
@@ -168,13 +627,10 @@
                             while (dr.Read() == true)
                             {
                                 schedule = new CourseSchedule();
-                                
+
                                 schedule.Id = int.Parse(dr.GetValue(0).ToString());
-                                schedule.CourseCode = dr.GetString(1);
-                                schedule.CourseTitle = dr.GetString(2);
-                                schedule.YearId =  dr.GetString(3);
-                                schedule.SemesterId = int.Parse(dr.GetValue(4).ToString());
-                                schedule.LMSCourseId = 0; // Zero is passed because it is not yet known 
+                                schedule.ExamCode = dr.GetString(1);
+                                schedule.ExamTitle = dr.GetString(2);
 
                                 schedules.Add(schedule);
                             }
@@ -203,9 +659,11 @@
 
                                 CourseScheduleProfile profile = GetCourseScheduleProfile(schedule);
 
-                                CreateCategory(profile.CategoryId);
+                                //string catId =   CreateCategory(profile.CategoryId,$"{schedule.YearId} Semester {schedule.SemesterId}");
+                                string catId = CreateCategory(profile.CategoryId, $"{DateTime.Now.Year.ToString()}");
 
-                                
+
+                                profile.CategoryId = catId; //Parent Folder
                                 int LMSid = CreateCourse(profile);
 
                                 if (LMSid > 0)
@@ -213,7 +671,7 @@
 
 
                                     // Update Student Table 
-                                    cmd = new SqlCommand($"Update EduCourseSchedule set [LMSCourseId] = {LMSid}, [isTransmitedToLMS]=1 where [srn] ={schedule.Id}", cnn);
+                                    cmd = new SqlCommand($"Update ExamCourses set [ProvisionedId] = {LMSid}, [Provisioned]=1 where [Id] ={schedule.Id}", cnn);
                                     cmd.ExecuteNonQuery();
                                     cmd.Dispose();
 
@@ -231,12 +689,12 @@
                         try
                         {
                             cnn.Open();
-                          _log4net.Warn("Previous connection expired and was reestablished");
+                            _log4net.Warn("Previous connection expired and was reestablished");
 
                         }
                         catch (Exception xe)
                         {
-                           _log4net.Error(xe.Message);
+                            _log4net.Error(xe.Message);
                         }
 
                         Thread.Sleep(1000);
@@ -245,9 +703,9 @@
 
 
 
-                    
-                  _log4net.Info(  $"Registration Broker firing {DateTime.Now.ToString("yyyy-MM-dd hh:mm:ss.fff")}"  );
-                    
+
+                    _log4net.Info($"Course Creator Broker firing {DateTime.Now.ToString("yyyy-MM-dd hh:mm:ss.fff")}");
+
                     Thread.Sleep(3000);
                 }
 
@@ -267,10 +725,6 @@
             // $"{registration.CourseCode.Trim().ToUpper()}_{registration.SessionId.ToString()}_{registration.SchoolSemesterId.ToString()}";
 
             var client = new HttpClient();
-
-            //https://class.jhu.edu.ng/webservice/rest/server.php?wstoken=•••••••&wsfunction=core_course_create_courses&moodlewsrestformat=json&courses[0][fullname]=Software Architecting&courses[0][shortname]=CSC154&courses[0][categoryid]=2&courses[0][idnumber]=CSC154&courses[0][summary]=CSC154 transitions students to programming on the UNIX machines. The class aims to teach students about computer systems from the hardware up to the source code. Topics include machine architecture (registers, I/O, basic assembly language), memory models (pointers, memory allocation, data representation), compilation (stack frames, semantic analysis, code generation), and basic concurrency (threading, synchronization).&courses[0][summaryformat]=1&courses[0][format]=topics&courses[0][showgrades]=1&courses[0][newsitems]=5&courses[0][startdate]=1689202800&courses[0][enddate]=1702422000&courses[0][visible]=1
-            //wsfunction=core_course_create_courses&moodlewsrestformat=json&courses[0][fullname]=Software Architecting&courses[0][shortname]=CSC154&courses[0][categoryid]=2&courses[0][idnumber]=CSC154&courses[0][summary]=CSC154 transitions students to programming on the UNIX machines. The class aims to teach students about computer systems from the hardware up to the source code. Topics include machine architecture (registers, I/O, basic assembly language), memory models (pointers, memory allocation, data representation), compilation (stack frames, semantic analysis, code generation), and basic concurrency (threading, synchronization).&courses[0][summaryformat]=1&courses[0][format]=topics&courses[0][showgrades]=1&courses[0][newsitems]=5&courses[0][startdate]=1689202800&courses[0][enddate]=1702422000&courses[0][visible]=1
-
 
             string apiUrl = $@"{profile.LMSUrl}/webservice/rest/server.php?wstoken={profile.wstoken}&wsfunction={profile.wsfunction}&moodlewsrestformat={profile.moodlewsrestformat}&courses[0][fullname]={profile.CourseTitle}&courses[0][shortname]={profile.ShortName}&courses[0][categoryid]={profile.CategoryId}&courses[0][idnumber]={profile.courseid}&courses[0][summary]={profile.CourseDescription}&courses[0][summaryformat]=1&courses[0][format]=topics&courses[0][showgrades]=1&courses[0][newsitems]=5&courses[0][startdate]={profile.StartDate}&courses[0][enddate]={profile.EndDate}&courses[0][visible]=1";
 
@@ -322,11 +776,6 @@
 
             //Doues the CategoryID Exists? Yes=Move On otherwise create it
 
-           
-
-
-
-
             var configBuilder = new ConfigurationBuilder().AddJsonFile("Settings.json").Build();
             var configsession = configBuilder.GetSection("LMSCreateCourse");
 
@@ -341,53 +790,54 @@
 
             profile.moodlewsrestformat = configsession.GetSection("Moodlewsrestformat").Value.Trim();
 
-            profile.StartDate = configsession.GetSection("StartDate").Value.Trim().ToInteger();
+            profile.StartDate = DateTime.Now.ToString().ToInteger();
 
-            profile.EndDate = configsession.GetSection("EndDate").Value.Trim().ToInteger();
+            profile.EndDate = DateTime.Now.AddYears(10).ToString().ToInteger();
 
 
 
             // Find out which category is current
-            profile.CategoryId  = $"{schedule.YearId.LastFourCharacters()}{schedule.SemesterId}";     // configsession.GetSection("CategoryId").Value.Trim();
-             
+            //profile.CategoryId  = $"{schedule.YearId.LastFourCharacters()}{schedule.SemesterId}";      
+            profile.CategoryId = $"{DateTime.Now.Year}";
 
-            profile.ShortName = $@"{schedule.CourseCode.ToUpper()}_{schedule.YearId.LastTwoCharacters()}{schedule.SemesterId}";
-            profile.courseid = schedule.CourseCode.ToUpper();
+            profile.ShortName = $@"{schedule.ExamCode.ToUpper()}";
+            profile.courseid = $@"{schedule.ExamCode.ToUpper()}";// {schedule.YearId.LastTwoCharacters()}{schedule.SemesterId}";//schedule.CourseCode.ToUpper();
 
-            profile.CourseDescription = $@"This course is {schedule.CourseTitle} ...";
-            profile.CourseTitle = $"{profile.courseid}-{schedule.CourseTitle}";
 
+            profile.CourseTitle = $"{profile.courseid}-{schedule.ExamTitle}";
+            profile.CourseDescription = $@"This course is {schedule.ExamTitle} ...";
 
 
             return profile;
 
         }
 
-        private static void CreateCategory(string categoryId)
+        private static string CreateCategory(string categoryId, string categoryName)
         {
 
-
+            string catid = string.Empty;
+            bool found = false;
             var configBuilder = new ConfigurationBuilder().AddJsonFile("Settings.json").Build();
             var configsession = configBuilder.GetSection("LMSCreateCourse");
 
 
-            
 
             string wstoken = configsession.GetSection("LMSToken").Value.Trim();
 
-           string LMSUrl = configsession.GetSection("LMSUrl").Value.Trim();
+            string LMSUrl = configsession.GetSection("LMSUrl").Value.Trim();
 
-          string wsfunction = configsession.GetSection("WSfunction").Value.Trim();
+            string wsfunction = configsession.GetSection("WSfunction").Value.Trim();
 
             string moodlewsrestformat = configsession.GetSection("Moodlewsrestformat").Value.Trim();
+            string rootcategoryid = configsession.GetSection("RootCategoryId").Value.Trim();
 
-            
+
 
             var client = new HttpClient();
 
-            string apiUrl = $@"https://class.jhu.edu.ng/webservice/rest/server.php?wstoken={wstoken}&wsfunction=core_course_get_categories&moodlewsrestformat=json&criteria[0][key]=id&criteria[0][value]={categoryId}";
+            string apiUrl = $@"{LMSUrl}/webservice/rest/server.php?wstoken={wstoken}&wsfunction=core_course_get_categories&moodlewsrestformat=json&criteria[0][key]=idnumber&criteria[0][value]={"EXAM"}";
 
-             
+
             var request = new HttpRequestMessage(HttpMethod.Get, apiUrl);
             var response = client.SendAsync(request).GetAwaiter().GetResult();
             response.EnsureSuccessStatusCode();
@@ -395,31 +845,84 @@
             var ProfileTransmitedFeedBack = response.Content.ReadAsStringAsync().GetAwaiter().GetResult();
 
             string aa = ProfileTransmitedFeedBack.ToString();
+            if (ProfileTransmitedFeedBack.ToString() == "[]")
+            {
+                //  Itdoes notexists  - Createit
+                client.Dispose();
+                client = new HttpClient();
 
+                apiUrl = $@"{LMSUrl}/webservice/rest/server.php?wstoken={wstoken}&wsfunction=core_course_create_categories&moodlewsrestformat=json&categories[0][name]={"EXAMS"}&categories[0][parent]={"0"}&categories[0][idnumber]={"EXAM"}";
+                request = new HttpRequestMessage(HttpMethod.Post, apiUrl);
+                response = client.SendAsync(request).GetAwaiter().GetResult();
+                response.EnsureSuccessStatusCode();
+
+                ProfileTransmitedFeedBack = response.Content.ReadAsStringAsync().GetAwaiter().GetResult();
+
+                aa = ProfileTransmitedFeedBack.ToString();
+
+                //catid
+
+                List<CreateCategoryResponse> cat = JsonConvert.DeserializeObject<List<CreateCategoryResponse>>(ProfileTransmitedFeedBack);
+                foreach (CreateCategoryResponse itm in cat)
+                {
+
+                    if (itm.Name.ToLower().Contains("exam"))
+                    {
+
+                        catid = itm.Id.ToString();
+                        found = true;
+                        break;
+
+
+                    }
+                    if (found != true)
+                    {
+                        continue;
+                    }
+                }
+            }
+            else
+            {
+                List<CreateCourseCategoryResponse> usersData = JsonConvert.DeserializeObject<List<CreateCourseCategoryResponse>>(ProfileTransmitedFeedBack);
+                foreach (CreateCourseCategoryResponse itms in usersData)
+                {
+                    if (itms.IdNumber.ToLower().Contains("exam"))
+                    {
+
+                        catid = itms.Id.ToString();
+                        found = true;
+                        break;
+
+
+                    }
+                    if (found != true)
+                    {
+                        continue;
+                    }
+                }
+
+                // cat id
+            }
             // Create it if there is error
 
 
-
-
-
-            List<CreateCourseResponse> usersData = new List<CreateCourseResponse>();
             _log4net.Info(aa);
-            try
-            {
+            //try
+            //{
 
-                if (aa.Contains("exception") == false)
-                {
-                   // usersData = JsonConvert.DeserializeObject<List<CreateCourseResponse>>(ProfileTransmitedFeedBack);
-                }
+            //    if (aa.Contains("exception") == false)
+            //    {
+            //       // usersData = JsonConvert.DeserializeObject<List<CreateCourseResponse>>(ProfileTransmitedFeedBack);
+            //    }
 
-            }
-            catch (Exception)
-            {
+            //}
+            //catch (Exception)
+            //{
 
-                throw;
-            }
+            //    throw;
+            //}
 
-
+            return catid;
 
         }
 
@@ -442,7 +945,7 @@
                     if (cnn.State == ConnectionState.Open)
                     {
 
-                        SqlCommand cmd = new SqlCommand(@"Select CR.CourseRegistrationId,CR.MatricNumber,CR.CourseCode,CR.SessionId,CR.SchoolSemesterId,ST.LMSUserId from CourseRegistration CR join Students ST  on CR.MatricNumber = ST.MatricNumber where CR.isRegisteredToLMS=0", cnn);
+                        SqlCommand cmd = new SqlCommand(@"select E.[Id], E.[ProvisionedId] , C.[ProvisionedId] from [ExamEnrollments] E inner join [ExamCourses] C on E.[ExamCode] = C.[ExamCode] where E.[IsProvisioned] = 1 and E.[Enrolled] =0 and E.[IsDeferred]=0", cnn);
 
 
                         SqlDataReader dr = cmd.ExecuteReader();
@@ -461,35 +964,15 @@
                                 registration = new CourseRegistration();
 
                                 registration.Id = int.Parse(dr.GetValue(0).ToString());
-                                registration.MatricNumber = dr.GetString(1).Split(new char[] { '/', ' ', '-', '_' }).Aggregate((a, b) => (a + b)).ToLower();
-                                
-                                registration.CourseCode = dr.GetString(2);
-                                registration.SessionId = int.Parse(dr.GetValue(3).ToString());
-                                registration.SchoolSemesterId = int.Parse(dr.GetValue(4).ToString());
-                                registration.LMSUserId = int.Parse(dr.GetValue(5).ToString());
-                                registration.ShortName = $@"{registration.CourseCode.ToUpper()}_{YearID}{SemesterId}";                                
-                                
+
+                                registration.LMSUserId = int.Parse(dr.GetValue(1).ToString()).ToString();//.Split(new char[] { '/', ' ', '-', '_' }).Aggregate((a, b) => (a + b)).ToLower();
+
+                                registration.LMSCourseId = int.Parse(dr.GetValue(2).ToString()).ToString();
+
                                 registrations.Add(registration);
                             }
 
-                            // This region was to test registration
-                            #region /// To be deleted 
 
-                            //registration = new CourseRegistration();
-
-                            //registration.Id = 1;
-                            //registration.MatricNumber = "o";
-
-                            //registration.CourseCode = "TEST821";
-                            //registration.SessionId = 23;
-                            //registration.SchoolSemesterId = 1;
-                            //registration.LMSUserId = 22;
-                            //registration.ShortName = "TEST821_231";
-
-                            //registrations.Add(registration);
-
-
-                            #endregion
 
 
 
@@ -510,16 +993,17 @@
                                 // Send to LMS
 
 
-                                CourseRegistrationProfile profile = GetCourseRegistrationProfile(registration,cnn);
+                                CourseRegistrationProfile profile = GetCourseRegistrationProfile(registration, cnn);
 
                                 if (RegisterStudent(profile) == true)
 
                                 { // Update Student Table 
 
-                                    cmd = new SqlCommand($"Update CourseRegistration set [isRegisteredToLMS]=1 where [CourseRegistrationId] ={registration.Id}", cnn);
+
+                                    cmd = new SqlCommand($"Update [ExamEnrollments] set [Enrolled]=1 where [Id] ={registration.Id}", cnn);
                                     cmd.ExecuteNonQuery();
                                     cmd.Dispose();
-
+                                    _log4net.Info($"UserID {profile.userid} successfully registered in Course Id={profile.courseid}");
                                 }
 
                             }
@@ -539,7 +1023,7 @@
                         }
                         catch (Exception xe)
                         {
-                           _log4net.Error(xe.Message);
+                            _log4net.Error(xe.Message);
                         }
 
                         Thread.Sleep(1000);
@@ -592,7 +1076,7 @@
                     }
                     else
                     {
-                        _log4net.Warn($"UserID {profile.userid} - {profile.username} - {ProfileTransmitedFeedBack.ToString()}");
+                        _log4net.Warn($"UserID {profile.userid} - {ProfileTransmitedFeedBack.ToString()}");
                     }
 
                 }
@@ -616,7 +1100,7 @@
 
             CourseRegistrationProfile profile = new CourseRegistrationProfile();
 
-            profile.wstoken = configsession.GetSection("LMSRegistrationToken").Value.Trim();
+            profile.wstoken = configsession.GetSection("LMSToken").Value.Trim();
 
             profile.LMSUrl = configsession.GetSection("LMSUrl").Value.Trim();
 
@@ -626,28 +1110,10 @@
 
             profile.moodlewsrestformat = configsession.GetSection("Moodlewsrestformat").Value.Trim();
 
-            string YearId = configsession.GetSection("CurrentYearId").Value.Trim();
-            string SemesterId = configsession.GetSection("CurrentSemesterId").Value.Trim();
+            profile.userid = registration.LMSUserId;
+            profile.courseid = registration.LMSCourseId;
 
 
-            string coursecode = registration.CourseCode.Replace("1f", "1|").Replace("2f", "2|").Replace("1e", "1|").Replace("2e", "2|");
-            coursecode = coursecode.Split(new char[] { '|' })[0];
-
-            SqlCommand cmd = new SqlCommand($@"select LMSCourseId from EduCourseSchedule where CourseCode = '{coursecode}' and SemesterId={SemesterId} and YearId = {YearId}", cnn);
-            SqlDataReader dr = cmd.ExecuteReader();
-            if (dr.HasRows==true)
-            {
-                if (dr.Read() ==true)
-                {
-                    profile.courseid = int.Parse(dr.GetValue(0).ToString()).ToString();
-                } 
-
-            }
-
-            dr.Close();
-            cmd.Dispose();            
-
-            profile.userid = registration.LMSUserId.ToString();    // registration.MatricNumber.Split(new char[] { '/', ' ', '-', '_' }).Aggregate((a, b) => (a + b)).ToLower();
             return profile;
 
         }
@@ -745,7 +1211,7 @@
                                 }
 
 
-                               
+
                                 Paids.Add(Paid);
                             }
                         }
@@ -779,9 +1245,9 @@
 
                             signinrequest.AddParameter("application/json", signIn, ParameterType.RequestBody);
                             IRestResponse signinresponse = signinclient.Execute(signinrequest);
-                           _log4net.Info(signinresponse.Content.ToString());
+                            _log4net.Info(signinresponse.Content.ToString());
 
-                            if (signinresponse.ResponseStatus == ResponseStatus.Completed )
+                            if (signinresponse.ResponseStatus == ResponseStatus.Completed)
                             {
                                 // Prepare the invoice and send
 
@@ -814,9 +1280,9 @@
                                     #endregion
 
                                     // Create the invoice
-                                   // var docs = Array.Empty<DocumentLines>();
+                                    // var docs = Array.Empty<DocumentLines>();
 
-                                   // docs.Append(doc);
+                                    // docs.Append(doc);
 
                                     PaymentInvoice invoice = new PaymentInvoice();
                                     invoice.NumAtCard = payment.FullName;
@@ -856,7 +1322,7 @@
                                     IRestResponse invoiceresponse = invoiceclient.Execute(invoicerequest);
 
 
-                                   _log4net.Info(invoiceresponse.Content);
+                                    _log4net.Info(invoiceresponse.Content);
 
 
                                     if (invoiceresponse.ResponseStatus == ResponseStatus.Completed)
@@ -882,8 +1348,8 @@
                                         received.TransferAccount = payment.BankAccount;
                                         received.TransferSum = payment.Amount;
                                         received.DocDate = DateTime.Parse(payment.PaymentDate).ToString("yyyy-MM-dd");
-                                        received.U_PortalReceiptNo = invoice.U_PortalInvoiceNo.Replace("JHU","RPT");
-                                        
+                                        received.U_PortalReceiptNo = invoice.U_PortalInvoiceNo.Replace("JHU", "RPT");
+
 
                                         // We convert the received to JSON
 
@@ -902,11 +1368,11 @@
 
                                         paymentrequest.AddParameter("application/json", paymentData, ParameterType.RequestBody);
                                         IRestResponse paymentresponse = paymentclient.Execute(paymentrequest);
-                                         
 
 
 
-                              
+
+
 
                                         _log4net.Info(paymentresponse.Content);
 
@@ -932,7 +1398,7 @@
 
                                 // Stage 5, push payment to the invoice 
 
-                                    // Stage 6, update the PaymentTransaction Table
+                                // Stage 6, update the PaymentTransaction Table
 
                             }
 
@@ -945,7 +1411,7 @@
                             cnn.Open();
 
                             Thread.Sleep(20000);
-                         _log4net.Info("The database reconnected");
+                            _log4net.Info("The database reconnected");
 
                         }
 
@@ -960,7 +1426,7 @@
             }
             catch (Exception ex)
             {
-               _log4net.Error(ex.Message);
+                _log4net.Error(ex.Message);
                 Thread.Sleep(120000);
             }
 
@@ -987,9 +1453,9 @@
             while (!isApplicationProcessing == false)
 
             {
-               
+
                 _log4net.Info($"Faculty thread in progress");
-             
+
 
                 Thread.Sleep(4000);
             }
@@ -1000,9 +1466,9 @@
             while (!isApplicationProcessing == false)
 
             {
-                 
+
                 _log4net.Info($"Department thread in progress");
-               
+
 
                 Thread.Sleep(4000);
             }
@@ -1023,8 +1489,6 @@
 
         private static void CourseHandler(object? source)
         {
-
-
 
             while (!isApplicationProcessing == false)
 
@@ -1047,38 +1511,76 @@
             string connectionstring = configsession.GetSection("connectionstring").Value.Trim();
 
             SqlConnection cnn = new SqlConnection(connectionstring);
-            cnn.Open();
+
 
 
             try
             {
+                cnn.Open();
 
                 while (!isApplicationProcessing == false)
 
                 {
                     if (cnn.State == ConnectionState.Open)
                     {
+                        // first update the table
 
-                        SqlCommand cmd = new SqlCommand("Select [StudentId],[MatricNumber],[Surname],[OtherNames],[Email],[Phone] from [Students] where [IdTransmitedToLMS]=0", cnn);
 
+                        SqlCommand cmd = new SqlCommand("Select [MembershipNo],[ProvisionedId] from [ExamEnrollments] where [ActiveStatus]=0 and [isProvisioned]=1", cnn);
                         SqlDataReader dr = cmd.ExecuteReader();
-                        List<StudentProfile> students = new List<StudentProfile>();
+
+                        List<MemberProfile> existingMembers = new List<MemberProfile>();
+                        if (dr.HasRows == true)
+                        {
+                            MemberProfile existingMember = null;
+
+                            while (dr.Read() == true)
+                            {
+                                existingMember = new MemberProfile();
+                                existingMember.MembershipNo = dr.GetString(0);
+                                existingMember.Id = int.Parse(dr.GetValue(1).ToString());
+                                existingMembers.Add(existingMember);
+
+
+                            }
+
+                            dr.Close();
+                            cmd.Dispose();
+
+                            foreach (MemberProfile member in existingMembers)
+                            {
+                                cmd = new SqlCommand($"update [ExamEnrollments] set [IsProvisioned] = 1, [ProvisionedId]= {member.Id} where [MembershipNo]='{member.MembershipNo}'", cnn);
+                                cmd.ExecuteNonQuery();
+                                cmd.Dispose();
+                            }
+
+
+                        }
+
+                        dr.Close();
+                        cmd.Dispose();
+
+                        cmd = new SqlCommand("Select [Id],[MembershipNo],[LastName],[FirstName],[Email] from [ExamEnrollments] where [ActiveStatus]=0 and [isProvisioned]=0 and [IsDeferred]=0", cnn);
+
+                        dr = cmd.ExecuteReader();
+                        List<MemberProfile> members = new List<MemberProfile>();
                         if (dr.HasRows == true)
                         {
 
-                            StudentProfile student = null;
+                            MemberProfile member = null;
                             while (dr.Read() == true)
                             {
-                                student = new StudentProfile();
+                                member = new MemberProfile();
 
-                                student.Id = int.Parse(dr.GetValue(0).ToString());
-                                student.MatricNumber = dr.GetString(1);
-                                student.LastName = dr.GetString(2);
-                                student.FirstName = dr.GetString(3);
-                                student.Email = dr.GetString(4);
-                                student.Phone = dr.GetString(5);
-
-                                students.Add(student);
+                                member.Id = int.Parse(dr.GetValue(0).ToString());
+                                member.MembershipNo = dr.GetString(1);
+                                member.LastName = dr.IsDBNull(2) ? DateTime.Now.ToString("yyyyMMddHHmmssfff") : dr.GetString(2);
+                                member.FirstName = dr.IsDBNull(3) ? DateTime.Now.ToString("yyyyMMddHHmmssfff") : dr.GetString(3);
+                                member.Email = dr.IsDBNull(4) ? string.Empty : dr.GetString(4);
+                                if (member.Email.Trim().Length > 0)
+                                {
+                                    members.Add(member);
+                                }
 
                             }
 
@@ -1089,43 +1591,22 @@
                         dr.Close();
                         cmd.Dispose();
 
-                        List<StudentProfile> registeredStudents = new List<StudentProfile>();
-
-                        if (students.Count > 0)
-                        {
-                            foreach (StudentProfile student in students)
-                            {
-                                cmd = new SqlCommand($"Select [MatricNumber] from [CourseRegistration] where [MatricNumber]='{student.MatricNumber}'", cnn);
-
-                                dr = cmd.ExecuteReader();
-                                if (dr.HasRows == true)
-                                {
-                                    registeredStudents.Add(student);
 
 
-                                }
-
-                                dr.Close();
-                                cmd.Dispose();
-
-                            }
-
-                        }
-
-                        if (registeredStudents.Count > 0)
+                        if (members.Count > 0)
                         {
                             // Send to LMS
 
-                            foreach (StudentProfile student in registeredStudents)
+                            foreach (MemberProfile member in members)
                             {
 
-                                LMSProfile profile = GetStudentProfile(student);
+                                LMSProfile profile = GetStudentProfile(member);
 
                                 if (TransmitProfile(profile) == true)
 
                                 { // Update Student Table 
 
-                                    cmd = new SqlCommand($"Update Students set LMSUserId={profile.Id}, [IdTransmitedToLMS]=1 where [StudentId] ={student.Id}", cnn);
+                                    cmd = new SqlCommand($"Update ExamEnrollments set [ProvisionedId]={profile.Id}, [isProvisioned]=1 where [Id] ={member.Id}", cnn);
                                     cmd.ExecuteNonQuery();
                                     cmd.Dispose();
 
@@ -1142,8 +1623,10 @@
                     {
                         try
                         {
+                            cnn.Dispose();
+                            cnn.Close();
                             cnn.Open();
-                           _log4net.Info("Previous connection expired and was reestablished");
+                            _log4net.Info("Previous connection expired and was reestablished");
 
                         }
                         catch (Exception xe)
@@ -1157,36 +1640,39 @@
 
 
 
-                     
-                 _log4net.Info($"Registration Broker firing {DateTime.Now.ToString("yyyy-MM-dd hh:mm:ss.fff")}");
-                    
+
+                    _log4net.Info($"Registration Broker firing {DateTime.Now.ToString("yyyy-MM-dd hh:mm:ss.fff")}");
+
                     Thread.Sleep(3000);
                 }
 
             }
             catch (Exception xe)
             {
-               _log4net.Error(xe.Message);
+                _log4net.Error(xe.Message);
             }
         }
 
-        private static LMSProfile GetStudentProfile(StudentProfile student)
+        private static LMSProfile GetStudentProfile(MemberProfile member)
         {
+            LMSProfile profile = new LMSProfile();
+            //try
+            //{
             var configBuilder = new ConfigurationBuilder().AddJsonFile("Settings.json").Build();
             var configsession = configBuilder.GetSection("LMSSettings");
 
 
 
-            LMSProfile profile = new LMSProfile();
+            //LMSProfile profile = new LMSProfile();
             profile.wstoken = configsession.GetSection("LMSToken").Value.Trim();
             profile.LMSUrl = configsession.GetSection("LMSUrl").Value.Trim();
             profile.wsfunction = configsession.GetSection("ProfileWSfunction").Value.Trim();
             profile.moodlewsrestformat = "json";
             profile.createpassword = int.Parse(configsession.GetSection("CreatePassword").Value.Trim()); // Do not generate random password
 
-            profile.username = student.MatricNumber.Split(new char[] { '/', ' ', '-', '_' }).Aggregate((a, b) => (a + b)).ToLower();
+            profile.username = member.MembershipNo.Split(new char[] { '/', ' ', '-', '_' }).Aggregate((a, b) => (a + b)).ToLower();
 
-            profile.password = string.Empty;
+            profile.password = member.MembershipNo.Split(new char[] { '/', ' ', '-', '_' }).Aggregate((a, b) => (a + b)).ToLower(); //string.Empty;
 
             if (profile.createpassword == 1)
             {
@@ -1195,18 +1681,22 @@
             }
 
             profile.auth = "manual";
-            profile.firstname = student.FirstName;
-            profile.lastname = student.LastName;
-            profile.email = student.Email;
+            profile.firstname = member.FirstName;
+            profile.lastname = member.LastName;
+            profile.email = member.Email;
             profile.maildisplay = int.Parse(configsession.GetSection("MailDisplay").Value.Trim());
             profile.idnumber = profile.username;// configsession.GetSection("IdNumber").Value.Trim();
             profile.usersLang = "en";
-
             return profile;
+            //}
+            //catch(Exception ex)
+            //{
+            //    ex.Message.ToString();
+            //}
+            //return profile;
         }
 
         private static bool TransmitProfile(LMSProfile profile)
-
         {
             bool ret = false;
 
@@ -1240,7 +1730,32 @@
                     }
                     else
                     {
-                        _log4net.Warn($"UserId={profile.idnumber} - {ProfileTransmitedFeedBack.ToString()}");
+                        if (ProfileTransmitedFeedBack.ToString().Contains("invalidparameter") != false)
+                        {
+                            _log4net.Warn($"UserId={profile.idnumber} already exists- {ProfileTransmitedFeedBack.ToString()}");
+
+                            // get the 
+                            client.Dispose();
+                            client = new HttpClient();
+                            string apiUrlW = $@"{profile.LMSUrl}/webservice/rest/server.php?wstoken={profile.wstoken}&wsfunction=core_user_get_users&moodlewsrestformat=json&criteria[0][key]=email&criteria[0][value]={profile.email}";
+                            // http://cbt.cipmnigeria.org/webservice/rest/server.php?wstoken=•••••••&wsfunction=core_user_get_users&moodlewsrestformat=json&criteria[0][key]=email&criteria[0][value]=teststudent1@email.com
+                            var requestw = new HttpRequestMessage(HttpMethod.Get, apiUrl);
+                            var responseW = client.SendAsync(requestw).GetAwaiter().GetResult();
+                            responseW.EnsureSuccessStatusCode();
+
+                            var GetProfileTransmitedFeedBack = responseW.Content.ReadAsStringAsync().GetAwaiter().GetResult();
+
+                            List<UserProfileOnLMS> usersDataw = JsonConvert.DeserializeObject<List<UserProfileOnLMS>>(GetProfileTransmitedFeedBack);
+
+                            if (usersDataw.Count > 0)
+                            {
+                                profile.Id = usersDataw[0].Id;
+                                ret = true;
+
+                            }
+
+                        }
+
                     }
                 }
 
@@ -1248,7 +1763,7 @@
             catch (Exception ex)
             {
 
-               _log4net.Error(ex.Message);
+                _log4net.Error(ex.Message);
             }
 
             return ret;

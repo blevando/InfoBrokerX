@@ -6,12 +6,11 @@ using System.Threading.Tasks;
 
 namespace CIPMBroker.Models
 {
-   
-    public class UserLMS
+    public class EnrolledUserDTO
     {
-        public int Id { get; set; }
-        public string Username { get; set; }
+      public int Id { get; set; }
+        public int CourseId { get; set; }
+        public int UserId { get; set; }
+
     }
-
-
 }

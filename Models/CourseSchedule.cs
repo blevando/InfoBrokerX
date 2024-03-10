@@ -1,20 +1,23 @@
 ﻿using System;
 using System.Collections.Generic;
+using System.ComponentModel.DataAnnotations;
 using System.Linq;
 using System.Text;
 using System.Threading.Tasks;
 
-namespace InfoBroker.Models
+namespace CIPMBroker.Models
 {
     public class CourseSchedule
     {
-        public int Id  { get; set; }
-        public string CourseCode { get; set; }
-        public string CourseTitle { get; set; }
-        public string YearId { get; set; }
-        public int SemesterId { get; set; }
-        public int LMSCourseId { get; set; }
-     
+        public int Id { get; set; }
+        
+        public string ExamCode { get; set; }
+        
+        public string ExamTitle { get; set; }
+        public int ActiveStatus { get; set; }
+        public int Provisioned { get; set; }
+        public int LMSId { get; set; }
+
 
     }
 }
