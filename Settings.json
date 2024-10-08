@@ -1,6 +1,6 @@
 {
   "LMSSettings": {
-    "LMSUrl": "http://cbt.cipmnigeria.org",
+    "LMSUrl": "https://cbt.cipmnigeria.org",
     //"LMSToken": "817f2f9d07ebb55d7184c687cd970eee",
     "LMSToken": "a3d80bdb5d74ef225bbc41e72b5af767",
     "ProfileWSfunction": "core_user_create_users",
@@ -9,7 +9,7 @@
     "IdNumber": ""
   },
   "LMSRegistration": {
-    "LMSUrl": "http://cbt.cipmnigeria.org",
+    "LMSUrl": "https://cbt.cipmnigeria.org",
     //"LMSRegistrationToken": "817f2f9d07ebb55d7184c687cd970eee",
     "LMSToken": "a3d80bdb5d74ef225bbc41e72b5af767",
     "ProfileWSfunction": "enrol_manual_enrol_users",
@@ -19,8 +19,19 @@
     "CurrentSemesterId": "1"
 
   },
+  "LMSUnEnrolled": {
+    "LMSUrl": "https://cbt.cipmnigeria.org",
+    //"LMSRegistrationToken": "817f2f9d07ebb55d7184c687cd970eee",
+    "LMSToken": "a3d80bdb5d74ef225bbc41e72b5af767",
+    "ProfileWSfunction": "enrol_manual_unenrol_users",
+    "RoleID": "5",
+    "Moodlewsrestformat": "json",
+    "CurrentYearId": "23",
+    "CurrentSemesterId": "1"
+
+  },
   "LMSCreateCourse": {
-    "LMSUrl": "http://cbt.cipmnigeria.org",
+    "LMSUrl": "https://cbt.cipmnigeria.org",
     //"LMSToken": "817f2f9d07ebb55d7184c687cd970eee",
     "LMSToken": "a3d80bdb5d74ef225bbc41e72b5af767",
     "WSfunction": "core_course_create_courses",
@@ -31,45 +42,62 @@
     "RootCategoryId": "2"
   },
   "LMSGetGrade": {
-    "LMSUrl": "http://cbt.cipmnigeria.org",
+    "LMSUrl": "https://cbt.cipmnigeria.org",
     //"LMSToken": "817f2f9d07ebb55d7184c687cd970eee",
     "LMSToken": "a3d80bdb5d74ef225bbc41e72b5af767",
     "WSfunction": "gradereport_overview_get_course_grades",
     "Moodlewsrestformat": "json"
 
   },
-    //"ERPSettings": {
-    //"AuthRUL": "https://41.138.161.33:50000/b1s/v1/Login",
-    //"https": null, //41.138.161.33:50000/b1s/v1/Login
-    //"UserName": "eduportal",
-    //"Passw": "Pass@123",
-    //"CompanyDb": "JHUTEST",
-    //"I nvoiceEndPoint": "https://41.138.161.33:50000/b  1s/v1/Invoices",
-    //"PaymentEndPoint": "https://41.138.161.33:50000/b1s/v1/IncomingPayments"
 
-    //"ERPSettings": {
-    //  "AuthRUL": "https://41.138.161.33:50000/b1s/v1/Login",    
-    //  "https": null, //41.138.161.33:50000/b1s/v1/Login
-    //  "UserName": "eduportal",
-    //  "Passw": "P@ss$101",
-    //  "CompanyDb": "JHU_DB",
-    //  "BPCodeApplicant": "APP001",
-    //  "BPCodeMasters": "MSTD001",
-    //  "BPCodePG": "PGST001",
-    //  "InvoiceEndPoint": "https://41.138.161.33:50000/b1s/v1/Invoices",
-    //  "PaymentEndPoint": "https://41.138.161.33:50000/b1s/v1/IncomingPayments"
+  "LMSGeneralCourseRegistration": {
+    "LMSUrl": "https://cbt.cipmnigeria.org",
+    //"LMSRegistrationToken": "817f2f9d07ebb55d7184c687cd970eee",
+    "LMSToken": "a3d80bdb5d74ef225bbc41e72b5af767",
+    "ProfileWSfunction": "enrol_manual_enrol_users",
+    "RoleID": "5",
+    "Moodlewsrestformat": "json",
+    "Enrolments[0][courseid]":"63",
+    "CurrentYearId": "23",
+    "CurrentSemesterId": "1"
 
-    //},
-    "AppSettings": {
 
-      "Organization": "CIPM"
+  },
+  //"ERPSettings": {
+  //"AuthRUL": "https://41.138.161.33:50000/b1s/v1/Login",
+  //"https": null, //41.138.161.33:50000/b1s/v1/Login
+  //"UserName": "eduportal",
+  //"Passw": "Pass@123",
+  //"CompanyDb": "JHUTEST",
+  //"I nvoiceEndPoint": "https://41.138.161.33:50000/b  1s/v1/Invoices",
+  //"PaymentEndPoint": "https://41.138.161.33:50000/b1s/v1/IncomingPayments"
 
-    },
-    "ConnectionString": {
-      //"connectionstring": "Server= 174.142.93.40;User id=admin1; TrustServerCertificate = True; Password=cy#$89pawer;database=JHU_PortalDatabase"
-      "connectionstring": "Server= 174.142.93.40;User id=eduteam; TrustServerCertificate = True; Password=edu$123team;database=MembershipDb"
+  //"ERPSettings": {
+  //  "AuthRUL": "https://41.138.161.33:50000/b1s/v1/Login",    
+  //  "https": null, //41.138.161.33:50000/b1s/v1/Login
+  //  "UserName": "eduportal",
+  //  "Passw": "P@ss$101",
+  //  "CompanyDb": "JHU_DB",
+  //  "BPCodeApplicant": "APP001",
+  //  "BPCodeMasters": "MSTD001",
+  //  "BPCodePG": "PGST001",
+  //  "InvoiceEndPoint": "https://41.138.161.33:50000/b1s/v1/Invoices",
+  //  "PaymentEndPoint": "https://41.138.161.33:50000/b1s/v1/IncomingPayments"
 
-    }
+  //},
+  "AppSettings": {
+
+    "Organization": "CIPM",
+    "GeneralCourseId": "63"
+
+
+  },
+  "ConnectionString": {
+    //"connectionstring": "Server= 174.142.93.40;User id=admin1; TrustServerCertificate = True; Password=cy#$89pawer;database=JHU_PortalDatabase"
+    "connectionstring": "Server= 174.142.93.40;User id=eduteam; TrustServerCertificate = True; Password=edu$123team;database=MembershipDb"
+    // "connectionstring": "Server=WIN-1PD2PNB74R9\\SQLEXPRESS;Database=MembershipDbLive;User ID=le;Password=kokoro$123;MultipleActiveResultSets=true;TrustServerCertificate=True"
 
   }
+
+}
  

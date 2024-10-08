@@ -14,5 +14,13 @@ namespace CIPMBroker.Models
         public string? LMSUserId { get; set; }
         public string? LMSCourseId { get; set; }
     }
-     
+
+    public class CourseUnEnrolled
+    {
+
+        public int Id { get; set; }
+        public string? LMSUserId { get; set; }
+        public string? LMSCourseId { get; set; }
+    }
+   
 }

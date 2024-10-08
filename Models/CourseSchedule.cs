@@ -11,8 +11,8 @@ namespace CIPMBroker.Models
     {
         public int Id { get; set; }
         
-        public string ExamCode { get; set; }
-        
+        public string ExamPeriodCode { get; set; }
+        public string ExamCode { get; set; }        
         public string ExamTitle { get; set; }
         public int ActiveStatus { get; set; }
         public int Provisioned { get; set; }

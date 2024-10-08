@@ -63,39 +63,37 @@
             _log4net.Info(organizationName);
 
             Thread Credentials = null;
-
-
-
             Thread RegisterStudents = null;
-
-
             Thread CreateCourse = null;
-
+            Thread UnEnrollment = null;
             Thread UpdateVoteCount = null;
-
             Thread CreateGrading = null;
-
             Thread CreateCandidate = null;
-
+            Thread RegisterStudenttoGeneralCourse = null;
+            Thread CreateStudentToLms = null;
             //Thread Email = null;
             //Thread updateDepartments;
 
             //Thread updateFaculties;
 
             //Thread UpdatePrograms;
-
-
             Credentials = new Thread(new ParameterizedThreadStart(CredentialsHandler));
-           // Credentials.Start();
-            Interlocked.Increment(ref threadCount);
-
-            RegisterStudents = new Thread(new ParameterizedThreadStart(CourseRegistrationHandler));
-            //RegisterStudents.Start();
-            Interlocked.Increment(ref threadCount);
+            Credentials.Start();
+            Interlocked.Increment(ref threadCount);   
 
 
             CreateCourse = new Thread(new ParameterizedThreadStart(CreateCourseHandler));
-           // CreateCourse.Start();
+            CreateCourse.Start();
+            Interlocked.Increment(ref threadCount);
+
+
+            RegisterStudents = new Thread(new ParameterizedThreadStart(CourseRegistrationHandler));
+            RegisterStudents.Start();
+            Interlocked.Increment(ref threadCount);
+
+
+            UnEnrollment = new Thread(new ParameterizedThreadStart(UnEnrollmentHandler));
+            UnEnrollment.Start();
             Interlocked.Increment(ref threadCount);
 
             UpdateVoteCount = new Thread(new ParameterizedThreadStart(UpdateVoteCountHandler));
@@ -107,35 +105,16 @@
             Interlocked.Increment(ref threadCount);
 
             CreateCandidate = new Thread(new ParameterizedThreadStart(CreateCandidateHandler));
-            //CreateCandidate.Start();
+            // CreateCandidate.Start();
             Interlocked.Increment(ref threadCount);
 
+            RegisterStudenttoGeneralCourse = new Thread(new ParameterizedThreadStart(RegisterStudenttoGeneralCourseHandler));
+            RegisterStudenttoGeneralCourse.Start();
+            Interlocked.Increment(ref threadCount);
 
-            //UpdatePayment = new Thread(new ParameterizedThreadStart(PaymentUpdateHandler));
-            //UpdatePayment.Start();
-            //Interlocked.Increment(ref threadCount);
-
-
-
-            //Email = new Thread(new ParameterizedThreadStart(SendEmail));
-            // Email.Start();
-            // Interlocked.Increment(ref threadCount);
-
-
-            //updateDepartments = new Thread(new ParameterizedThreadStart(DepartmentHandler));
-            //updateDepartments.Start();
-            //Interlocked.Increment(ref threadCount);
-
-
-            //updateFaculties = new Thread(new ParameterizedThreadStart(FacultyHandler));
-            //updateFaculties.Start();
-            //Interlocked.Increment(ref threadCount);
-
-
-            //UpdatePrograms = new Thread(new ParameterizedThreadStart(ProgramsHandler));
-            //UpdatePrograms.Start();
-            //Interlocked.Increment(ref threadCount);
-
+            CreateStudentToLms = new Thread(new ParameterizedThreadStart(CreateStudentToLmsHandler));
+            CreateStudentToLms.Start();
+            Interlocked.Increment(ref threadCount);
 
 
             while (!isApplicationProcessing == false)
@@ -148,9 +127,130 @@
 
         }
 
-        private static void CreateGradingHandler(object? obj)
+        private static void CreateStudentToLmsHandler(object? obj)
         {
+            var configBuilder = new ConfigurationBuilder().AddJsonFile("Settings.json").Build();
+            var configsession = configBuilder.GetSection("ConnectionString");
+            string connectionstring = configsession.GetSection("connectionstring").Value.Trim();
+            SqlConnection cnn = new SqlConnection(connectionstring);
+            try
+            {
+                cnn.Open();
+                while (!isApplicationProcessing == false)
+                {
+                    if (cnn.State == ConnectionState.Open)
+                    {
+                        // first update the table
+                        SqlCommand cmd = new SqlCommand("Select [MembershipNo],[ProvisionedId] from [Students] where [isProvisioned]=1", cnn);
+                        SqlDataReader dr = cmd.ExecuteReader();
 
+                        List<MemberProfile> existingMembers = new List<MemberProfile>();
+                        if (dr.HasRows == true)
+                        {
+                            MemberProfile existingMember = null;
+
+                            while (dr.Read() == true)
+                            {
+                                existingMember = new MemberProfile();
+                                existingMember.MembershipNo = dr.GetString(0);
+                                existingMember.Id = int.Parse(dr.GetValue(1).ToString());
+                                existingMembers.Add(existingMember);
+                            }
+
+                            dr.Close();
+                            cmd.Dispose();
+
+                            foreach (MemberProfile member in existingMembers)
+                            {
+                                //cmd = new SqlCommand($"update [ExamEnrollments] set [IsProvisioned] = 1, [ProvisionedId]= {member.Id}, Enrolled=0 where [MembershipNo]='{member.MembershipNo}'", cnn);
+                                cmd = new SqlCommand($"update [Students] set [IsProvisioned] = 1, [ProvisionedId]= {member.Id} where [MembershipNo]='{member.MembershipNo}'", cnn);
+                                cmd.ExecuteNonQuery();
+                                cmd.Dispose();
+                            }
+                        }
+
+                        dr.Close();
+                        cmd.Dispose();
+
+                        cmd = new SqlCommand("Select [Id],[MembershipNo],[LastName],[FirstName],[Email] from [Students] where [isProvisioned]=0", cnn);
+
+                        dr = cmd.ExecuteReader();
+                        List<MemberProfile> members = new List<MemberProfile>();
+                        if (dr.HasRows == true)
+                        {
+
+                            MemberProfile member = null;
+                            while (dr.Read() == true)
+                            {
+                                member = new MemberProfile();
+
+                                member.Id = int.Parse(dr.GetValue(0).ToString());
+                                member.MembershipNo = dr.GetString(1);
+                                member.LastName = dr.IsDBNull(2) ? DateTime.Now.ToString("yyyyMMddHHmmssfff") : dr.GetString(2);
+                                member.FirstName = dr.IsDBNull(3) ? DateTime.Now.ToString("yyyyMMddHHmmssfff") : dr.GetString(3);
+                                member.Email = dr.IsDBNull(4) ? string.Empty : dr.GetString(4);
+                                if (member.Email.Trim().Length > 0)
+                                {
+                                    members.Add(member);
+                                }
+                            }
+                        }
+
+                        dr.Close();
+                        cmd.Dispose();
+
+                        if (members.Count > 0)
+                        {
+                            // Send to LMS
+
+                            foreach (MemberProfile member in members)
+                            {
+
+                                LMSProfile profile = GetStudentProfile(member);
+
+                                if (TransmitProfile(profile) == true)
+
+                                { // Update Student Table 
+
+                                    // cmd = new SqlCommand($"Update ExamEnrollments set [ProvisionedId]={profile.Id}, [isProvisioned]=1,[Enrolled]=0 where [Id] ={member.Id}", cnn);
+                                    cmd = new SqlCommand($"Update Students set [ProvisionedId]={profile.Id}, [isProvisioned]=1  where [Id] ={member.Id}", cnn);
+                                    cmd.ExecuteNonQuery();
+                                    cmd.Dispose();
+                                    _log4net.Info($"Updated Students for User #Id={member.Id}");
+
+                                }
+                            }
+                        }
+                        Thread.Sleep(20000);
+                    }
+                    else
+                    {
+                        try
+                        {
+                            cnn.Dispose();
+                            cnn.Close();
+                            cnn.Open();
+                            _log4net.Info("Previous connection expired and was reestablished");
+                        }
+                        catch (Exception xe)
+                        {
+                            _log4net.Error(xe.Message);
+                        }
+                        Thread.Sleep(1000);
+                    }
+                    _log4net.Info($"Registration Broker firing {DateTime.Now.ToString("yyyy-MM-dd hh:mm:ss.fff")}");
+
+                    Thread.Sleep(3000);
+                }
+            }
+            catch (Exception xe)
+            {
+                _log4net.Error(xe.Message);
+            }
+
+        }
+        private static void RegisterStudenttoGeneralCourseHandler(object? obj)
+        {
 
             var configBuilder = new ConfigurationBuilder().AddJsonFile("Settings.json").Build();
             var configsession = configBuilder.GetSection("ConnectionString");
@@ -158,8 +258,216 @@
             string connectionstring = configsession.GetSection("connectionstring").Value.Trim();
 
             SqlConnection cnn = new SqlConnection(connectionstring);
+            cnn.Open();
+
+            try
+            {
+                while (!isApplicationProcessing == false)
+
+                {
+                    if (cnn.State == ConnectionState.Open)
+                    {
+
+                       // SqlCommand cmd = new SqlCommand(@"select E.[Id], E.[ProvisionedId] , C.[ProvisionedId] from [ExamEnrollments] E inner join [ExamCourses] C on E.[ExamCode] = C.[ExamCode] where E.[IsProvisioned] = 1 and E.[Enrolled] =0 and E.[IsDeferred]=0", cnn);
+                        SqlCommand cmd = new SqlCommand(@"select [Id], [ProvisionedId] , [ExamCode] from[ExamEnrollments]where[IsProvisioned] = 1 and[Enrolled] = 0 and[IsDeferred] = 0 and Examcode = 'PEXAM'", cnn);
+                        SqlDataReader dr = cmd.ExecuteReader();
+                        List<GeneralCourseRegistration> registrations = new List<GeneralCourseRegistration>();
+                        if (dr.HasRows == true)
+                        {
+                            var configBuilder1 = new ConfigurationBuilder().AddJsonFile("Settings.json").Build();
+                            var configsession1 = configBuilder1.GetSection("LMSGeneralCourseRegistration");
+
+                            string YearID = configsession1.GetSection("CurrentYearId").Value.Trim();//.ToInteger();
+                            string SemesterId = configsession1.GetSection("CurrentSemesterId").Value.Trim();
+
+                            GeneralCourseRegistration registration = null;
+                            while (dr.Read() == true)
+                            {
+                                registration = new GeneralCourseRegistration();
+
+                                registration.Id = int.Parse(dr.GetValue(0).ToString());
+
+                                registration.LMSUserId = int.Parse(dr.GetValue(1).ToString()).ToString();//.Split(new char[] { '/', ' ', '-', '_' }).Aggregate((a, b) => (a + b)).ToLower();
+
+                                //registration.LMSCourseId = int.Parse(dr.GetValue(2).ToString()).ToString();
+                                registration.LMSCourseId = configsession1.GetSection("Enrolments[0][courseid]").Value.Trim();
+
+                                registrations.Add(registration);
+                            }
+                        }
+
+                        dr.Close();
+                        cmd.Dispose();
+
+                        if (registrations.Count > 0)
+                        {
+                            // Send to LMS                      
+
+                            foreach (GeneralCourseRegistration registration in registrations)
+                            {
+                                // Send to LMS
+                                GeneralCourseRegistrationProfile profile = GetGeneralCourseRegistrationProfile(registration, cnn);
+
+                                if (GeneralRegisterStudent(profile) == true)
+
+                                {
+                                    // Update Student Table 
+                                    cmd = new SqlCommand($"Update [ExamEnrollments] set [Enrolled]=1 where [Id] ={registration.Id}", cnn);
+                                    cmd.ExecuteNonQuery();
+                                    cmd.Dispose();
+                                    _log4net.Info($"UserID {profile.userid} successfully registered in Course Id={profile.courseid}");
+                                }
+
+                                //Also Registered Students in the General Courses
+                                // RegisterStudentInGeneralCourses(profile, registration);
+                            }
+
+                        }
+
+                        Thread.Sleep(20000);
+                    }
+                    else
+                    {
+                        try
+                        {
+                            cnn.Open();
+                            _log4net.Warn("Previous connection expired and was reestablished");
+
+                        }
+                        catch (Exception xe)
+                        {
+                            _log4net.Error(xe.Message);
+                        }
+
+                        Thread.Sleep(1000);
+                    }
+
+                    Console.ForegroundColor = ConsoleColor.Cyan;
+                    _log4net.Info($"Registration Broker firing {DateTime.Now.ToString("yyyy-MM-dd hh:mm:ss.fff")}");
+                    Console.ResetColor();
+                    Thread.Sleep(3000);
+                }
+
+            }
+            catch (Exception xe)
+            {
+                _log4net.Info(xe.Message);
+            }
+        }
+
+        //private static GeneralCourseRegistrationProfile GetGeneralCourseRegistrationProfile(GeneralCourseRegistration registration, SqlConnection cnn)
+        //{
+        //    throw new NotImplementedException();
+        //}
+
+        private static void UnEnrollmentHandler(object? obj)
+        {
+            var configBuilder = new ConfigurationBuilder().AddJsonFile("Settings.json").Build();
+            var configsession = configBuilder.GetSection("ConnectionString");
+
+            string connectionstring = configsession.GetSection("connectionstring").Value.Trim();
+
+            SqlConnection cnn = new SqlConnection(connectionstring);
+            cnn.Open();
+
+            try
+            {
+
+                while (!isApplicationProcessing == false)
+
+                {
+                    if (cnn.State == ConnectionState.Open)
+                    {
+
+                        SqlCommand cmd = new SqlCommand(@"select E.[Id], E.[ProvisionedId] , C.[ProvisionedId] from [ExamEnrollments] E inner join [ExamCourses] C on E.[ExamCode] = C.[ExamCode] where E.[IsProvisioned] = 1 and E.[Enrolled] =1 and E.[IsDeferred]=1 and UnEnrolled=0", cnn);
 
 
+                        SqlDataReader dr = cmd.ExecuteReader();
+                        List<CourseUnEnrolled> registrations = new List<CourseUnEnrolled>();
+                        if (dr.HasRows == true)
+                        {
+                            var configBuilder1 = new ConfigurationBuilder().AddJsonFile("Settings.json").Build();
+                            var configsession1 = configBuilder1.GetSection("LMSUnEnrolled");
+
+                            string YearID = configsession1.GetSection("CurrentYearId").Value.Trim();//.ToInteger();
+                            string SemesterId = configsession1.GetSection("CurrentSemesterId").Value.Trim();
+
+                            CourseUnEnrolled registration = null;
+                            while (dr.Read() == true)
+                            {
+                                registration = new CourseUnEnrolled();
+
+                                registration.Id = int.Parse(dr.GetValue(0).ToString());
+
+                                registration.LMSUserId = int.Parse(dr.GetValue(1).ToString()).ToString();//.Split(new char[] { '/', ' ', '-', '_' }).Aggregate((a, b) => (a + b)).ToLower();
+
+                                registration.LMSCourseId = int.Parse(dr.GetValue(2).ToString()).ToString();
+
+                                registrations.Add(registration);
+                            }
+                        }
+
+                        dr.Close();
+                        cmd.Dispose();
+                        if (registrations.Count > 0)
+                        {
+                            // Send to LMS                      
+
+                            foreach (CourseUnEnrolled registration in registrations)
+                            {
+                                // Send to LMS
+                                CourseUnEnrolledProfile profile = GetCourseUnEnrolled(registration, cnn);
+
+                                if (RegisteredStudent(profile) == true)
+
+                                { // Update Student Table 
+
+                                    cmd = new SqlCommand($"Update [ExamEnrollments] set [UnEnrolled]=1, [Enrolled]=0 where [Id] ={registration.Id}", cnn);
+                                    cmd.ExecuteNonQuery();
+                                    cmd.Dispose();
+                                    _log4net.Info($"UserID {profile.userid} successfully UnEnrolled in Course Id={profile.courseid}");
+                                }
+                            }
+                        }
+                        Thread.Sleep(20000);
+                    }
+                    else
+                    {
+                        try
+                        {
+                            cnn.Open();
+                            _log4net.Warn("Previous connection expired and was reestablished");
+
+                        }
+                        catch (Exception xe)
+                        {
+                            _log4net.Error(xe.Message);
+                        }
+
+                        Thread.Sleep(1000);
+                    }
+
+                    Console.ForegroundColor = ConsoleColor.Cyan;
+                    _log4net.Info($"Registration Broker firing {DateTime.Now.ToString("yyyy-MM-dd hh:mm:ss.fff")}");
+                    Console.ResetColor();
+                    Thread.Sleep(3000);
+                }
+
+            }
+            catch (Exception xe)
+            {
+                _log4net.Info(xe.Message);
+            }
+        }
+        private static void CreateGradingHandler(object? obj)
+        {
+            // string? a =  obj.ToString();
+            var configBuilder = new ConfigurationBuilder().AddJsonFile("Settings.json").Build();
+            var configsession = configBuilder.GetSection("ConnectionString");
+
+            string connectionstring = configsession.GetSection("connectionstring").Value.Trim();
+
+            SqlConnection cnn = new SqlConnection(connectionstring);
 
             try
             {
@@ -171,12 +479,10 @@
                     if (cnn.State == ConnectionState.Open)
                     {
                         // first update the table
-
-
                         SqlCommand cmd = new SqlCommand("select E.Id,  c.provisionedid as courseId, E.provisionedid as userid from ExamCourses c, ExamEnrollments E where e.examCode = c.examCode and E.ActiveStatus=0 and e.isProvisioned=1", cnn);
                         SqlDataReader dr = cmd.ExecuteReader();
 
-                       
+
                         if (dr.HasRows == true)
                         {
                             List<EnrolledUserDTO> enrolledUsers = new List<EnrolledUserDTO>();
@@ -185,7 +491,7 @@
                             {
                                 EnrolledUserDTO user = new EnrolledUserDTO();
                                 user.Id = int.Parse(dr.GetValue(0).ToString());
-                                user.CourseId= int.Parse(dr.GetValue(1).ToString());
+                                user.CourseId = int.Parse(dr.GetValue(1).ToString());
                                 user.UserId = int.Parse(dr.GetValue(2).ToString());
 
                                 enrolledUsers.Add(user);
@@ -213,7 +519,7 @@
 
                                     List<GradeDetail> gradeDetails = new List<GradeDetail>();
 
-                                      gradeDetails = FetchGrade(profile);
+                                    gradeDetails = FetchGrade(profile);
 
                                     if (gradeDetails != null)
                                     {
@@ -233,10 +539,10 @@
                                                     if (enrolleduser.CourseId == gradeDetail.CourseId && enrolleduser.UserId.ToString() == profile.UserId)
                                                     {
 
-                                                        cmd = new SqlCommand($"Update ExamEnrollments set [Score] = {gradeDetail.Grade},[RawScore]={gradeDetail.RawGrade} where [Id] ={enrolleduser.Id}", cnn);
+                                                        cmd = new SqlCommand($"Update ExamEnrollments set [Score] = {gradeDetail.Grade},[RawScore]={gradeDetail.RawGrade},[HasScored]= {1},[IsResultPicked]={0}  where [Id] ={enrolleduser.Id}", cnn);
                                                         cmd.ExecuteNonQuery();
                                                         cmd.Dispose();
-                                                        _log4net.Info($"Scores {profile.UserId} are: Grade: {gradeDetail.Grade}, RawGrade={gradeDetail.RawGrade}");
+                                                        _log4net.Info($"Scores {profile.UserId} are: Grade: {gradeDetail.Grade}, RawGrade={gradeDetail.RawGrade},HasScored= {1},IsResultPicked={0} ");
                                                     }
 
                                                     break;
@@ -246,17 +552,17 @@
                                         }
 
 
-                                    }       
+                                    }
 
-                                       
-                                     
+
+
                                 }
                             }
 
 
                         }
 
-                         
+
 
                         Thread.Sleep(20000);
                     }
@@ -304,15 +610,15 @@
 
             var ProfileTransmitedFeedBack = response.Content.ReadAsStringAsync().GetAwaiter().GetResult();
 
-            string aa = ProfileTransmitedFeedBack.ToString().Replace("null","--");
+            string aa = ProfileTransmitedFeedBack.ToString().Replace("null", "--");
             //if (ProfileTransmitedFeedBack.ToString() == "[]")
             //{
 
             try
-            { 
-                
-                     gradesResponse = JsonConvert.DeserializeObject<GradesResponse>(ProfileTransmitedFeedBack);
-                                  
+            {
+
+                gradesResponse = JsonConvert.DeserializeObject<GradesResponse>(ProfileTransmitedFeedBack);
+
 
             }
             catch (Exception xe)
@@ -330,7 +636,7 @@
 
             var configBuilder = new ConfigurationBuilder().AddJsonFile("Settings.json").Build();
             var configsession = configBuilder.GetSection("LMSGetGrade");
- 
+
 
             profile.wstoken = configsession.GetSection("LMSToken").Value.Trim();
 
@@ -345,7 +651,7 @@
 
 
         }
-
+        //private static void CreateCandidateHandler()
         private static void CreateCandidateHandler(object? obj)
         {
             _log4net.Info("Create Candidate Module fired");
@@ -399,6 +705,7 @@
                                 HybridDictionary hb = new HybridDictionary();
                                 List<string> ids = new List<string>();
 
+
                                 while (dr.Read())
                                 {
                                     hb.Add(dr.GetString(1), int.Parse(dr.GetValue(0).ToString()));
@@ -415,19 +722,19 @@
                                     {
 
                                         //cmd = new SqlCommand($"Insert into Candidates(ElectionId,CandidateId, Candidate,Position,Comment, ActiveStatus, Manifesto,Passport,Youtube, Email,PhoneNumber,Gender,MembershipGrade, CreatedDate)Select ElectionId, NomineeId, Nominee,Position,Comment, ActiveStatus, Manifesto,Passport,YouTube, NomineeEmail,NomineePhone,Gender,MembershipGrade, CreatedDate from Nominations where ApprovalStatus='Approved' and  ActiveStatus=1", cnn);
-                                        cmd = new SqlCommand($"if not Exists (Select ElectionId, CandidateId from Candidates where ElectionId={hb[nomi]} and CandidateId='{nomi}')  Insert into Candidates(ElectionId,CandidateId, Candidate,Position,Comment, ActiveStatus, Manifesto,Passport, Youtube, Email,PhoneNumber,Gender,MembershipGrade, CreatedDate)Select ElectionId, NomineeId, Nominee,Position,Comment, ActiveStatus, Manifesto,Passport, Youtube, NomineeEmail,NomineePhone,Gender,MembershipGrade, CreatedDate from Nominations where ApprovalStatus='Approved'and ActiveStatus=1 and NomineeId='{nomi}' and ElectionId= {hb[nomi]}", cnn);
+                                        cmd = new SqlCommand($"if not Exists (Select ElectionId, CandidateId from Candidates where ElectionId={hb[nomi]} and CandidateId='{nomi}')  Insert into Candidates(ElectionId,CandidateId, Candidate,Position,PositionCount,Comment, ActiveStatus, Manifesto,Passport, Youtube, Email,PhoneNumber,Gender,MembershipGrade, CreatedDate)Select ElectionId, NomineeId, Nominee,Position,PositionCount,Comment, ActiveStatus, Manifesto,Passport, Youtube, NomineeEmail,NomineePhone,Gender,MembershipGrade, CreatedDate from Nominations where ApprovalStatus='Approved' and ActiveStatus=1 and NomineeId='{nomi}' and ElectionId= {hb[nomi]}", cnn);
                                         cmd.ExecuteNonQuery();
-
+                                        Console.WriteLine("Inserted into Candidate");
                                     }
                                     dr.Close();
                                     cmd.Dispose();
                                     if (ids.Count > 0)
                                     {
-                                       // string a = ids.Aggregate((a, b) => ($"{a}, {b}"));
+                                        // string a = ids.Aggregate((a, b) => ($"{a}, {b}"));
 
-                                            cmd = new SqlCommand($"Update Nominations Set Inserted=1 where Id in ( {ids.Aggregate((a, b) => ($"{a}, {b}"))} )", cnn);
-                                            cmd.ExecuteNonQuery();
- 
+                                        cmd = new SqlCommand($"Update Nominations Set Inserted=1 where Id in ( {ids.Aggregate((a, b) => ($"{a}, {b}"))} )", cnn);
+                                        cmd.ExecuteNonQuery();
+
                                         cmd.Dispose();
 
                                     }
@@ -514,7 +821,7 @@
                         if (activeElectionExist != false)
                         {
 
-                            cmd = new SqlCommand($"select C.Position, C.CandidateId, count (V.token) as nCount from Candidates C full outer join Votes V on C.ElectionId = V.ElectionId and  C.Position=V.Position and C.CandidateId = V.CandidateId where  C.ElectionId={currentElectionId} group by C.Position, C.CandidateId", cnn);
+                            cmd = new SqlCommand($"select C.Position, C.CandidateId, count (V.token) as nCount from Candidates C full outer join Votes V on C.ElectionId = V.ElectionId and  C.Position=V.Position and C.CandidateId = V.CandidateId where V.Transmitted = 1 and C.ElectionId={currentElectionId} group by C.Position, C.CandidateId", cnn);
                             dr = cmd.ExecuteReader();
 
                             List<VoteAggregate> aggregates = new List<VoteAggregate>();
@@ -546,13 +853,16 @@
                                     cmd = new SqlCommand($"update candidates set VoteCount = {aggregate.VoteCount} where ElectionId = {aggregate.ElectionId} and Position = '{aggregate.Position}' and CandidateId = '{aggregate.CandidateId}'", cnn);
                                     cmd.ExecuteNonQuery();
 
+                                    // SqlCommand Acmd = new SqlCommand($"update Votes set Transmitted = 0", cnn);
+                                    //Acmd.ExecuteNonQuery();
                                 }
 
-                                if (aggregates.Count == 1)
+                                //if (aggregates.Count == 1)
+                                if (aggregates.Count > 0)
                                 {
                                     _log4net.Info($"Successfully updated vote for a candidate");
                                 }
-                                else
+
                                 {
                                     _log4net.Info($"Successfully updated votes for {aggregates.Count} candidates");
                                 }
@@ -580,9 +890,7 @@
             {
                 _log4net.Error($"Error in Vote Count Update {ex.Message}");
             }
-
         }
-
         private static void SendEmail(object? obj)
         {
             throw new NotImplementedException();
@@ -608,73 +916,115 @@
                 {
                     if (cnn.State == ConnectionState.Open)
                     {
+                        //Create the categories first
 
-                        SqlCommand cmd = new SqlCommand("select [Id],[ExamCode],[ExamTitle] from  [ExamCourses] where [Provisioned]=0 and [ActiveStatus]=1", cnn);
 
-                        SqlDataReader dr = cmd.ExecuteReader();
-                        List<CourseSchedule> schedules = new List<CourseSchedule>();
+                        SqlCommand cmd = new SqlCommand("select [Id],[ExamPeriodCode] from  [ExamPeriods] where [isProvisioned]=0 and [ActiveStatus]=1", cnn);
+
+                      SqlDataReader dr = cmd.ExecuteReader();
+                      HybridDictionary categories = new HybridDictionary();
                         if (dr.HasRows == true)
                         {
-                            CourseSchedule schedule = null;
+                            
                             while (dr.Read() == true)
                             {
-                                schedule = new CourseSchedule();
-
-                                schedule.Id = int.Parse(dr.GetValue(0).ToString());
-                                schedule.ExamCode = dr.GetString(1);
-                                schedule.ExamTitle = dr.GetString(2);
-
-                                schedules.Add(schedule);
+                                
+                                categories.Add(long.Parse(dr.GetValue(0).ToString()),dr.GetSqlString(1).ToString().Trim());
+                               
                             }
-
                         }
-
                         dr.Close();
                         cmd.Dispose();
 
+                        HybridDictionary createdCategories = new HybridDictionary();
 
-
-                        if (schedules.Count > 0)
+                        foreach (DictionaryEntry cat in categories)
                         {
-                            // Send to LMS                      
 
-                            foreach (CourseSchedule schedule in schedules)
+
+                            var dietId = CreateDiet(cat.Value.ToString(), $"{cat.Value}{cat.Key}");
+
+                            if (dietId is not null)
                             {
 
-                                // Send to LMS
+                                createdCategories.Add(cat.Key, dietId);
 
-                                //string a = DateTime.Now.ToString();
-                                //a = a.ToInteger();
-
+                                cmd = new SqlCommand($"Update [ExamPeriods] Set [LMSCatId]= {dietId}  where [Id] ={cat.Key.ToString()}", cnn);
 
 
-
-                                CourseScheduleProfile profile = GetCourseScheduleProfile(schedule);
-
-                                //string catId =   CreateCategory(profile.CategoryId,$"{schedule.YearId} Semester {schedule.SemesterId}");
-                                string catId = CreateCategory(profile.CategoryId, $"{DateTime.Now.Year.ToString()}");
-
-
-                                profile.CategoryId = catId; //Parent Folder
-                                int LMSid = CreateCourse(profile);
-
-                                if (LMSid > 0)
-                                {
-
-
-                                    // Update Student Table 
-                                    cmd = new SqlCommand($"Update ExamCourses set [ProvisionedId] = {LMSid}, [Provisioned]=1 where [Id] ={schedule.Id}", cnn);
-                                    cmd.ExecuteNonQuery();
-                                    cmd.Dispose();
-
-                                }
 
                             }
 
+                            // Provision the courses under the category
+                            cmd = new SqlCommand("SELECT [Id], [ExamPeriodCode],[ExamCode],[ExamTitle] FROM [ExamCourseSchedule] where [IsProvisioned]=0", cnn);
+
+                            dr = cmd.ExecuteReader();
+                            List<CourseSchedule> schedules = new List<CourseSchedule>();
+                            if (dr.HasRows == true)
+                            {
+                                CourseSchedule schedule = null;
+                                while (dr.Read() == true)
+                                {
+                                    schedule = new CourseSchedule();
+
+                                    schedule.Id = int.Parse(dr.GetValue(0).ToString());
+                                    schedule.ExamPeriodCode = dr.GetString(1);
+                                    schedule.ExamCode = dr.GetString(2);
+                                    schedule.ExamTitle = dr.GetString(3);
+                                     
+
+                                    schedules.Add(schedule);
+                                }
+                            }
+                            dr.Close();
+                            cmd.Dispose();
+
+                            if (schedules.Count > 0)
+                            {
+                                // Send to LMS                      
+
+                                foreach (CourseSchedule schedule in schedules)
+                                {
+
+                                     
+
+                                    CourseScheduleProfile profile = GetCourseScheduleProfile(schedule);
+                                  //  profile.StartDate = schedule.
+                                    //
+                                    // Get all dietes//create them as categoryand 
+
+
+
+
+                                    //
+
+
+                                    //string catId =   CreateCategory(profile.CategoryId,$"{schedule.YearId} Semester {schedule.SemesterId}");
+                                    string catId = CreateCategory(profile.CategoryId, $"{DateTime.Now.Year.ToString()}");
+
+
+
+
+
+                                    profile.CategoryId = catId; //Parent Folder
+                                    int LMSid = CreateCourse(profile);
+
+                                    if (LMSid > 0)
+                                    {
+                                        // Update Student Table 
+                                        cmd = new SqlCommand($"Update ExamCourses set [ProvisionedId] = {LMSid}, [Provisioned]=1 where [Id] ={schedule.Id}", cnn);
+                                        cmd.ExecuteNonQuery();
+                                        cmd.Dispose();
+                                    }
+                                }
+                            }
+                            Thread.Sleep(20000);
+
+
+
                         }
 
-
-                        Thread.Sleep(20000);
+                        // End creating the categories
                     }
                     else
                     {
@@ -693,7 +1043,6 @@
                     }
 
                     _log4net.Info($"Course Creator Broker firing {DateTime.Now.ToString("yyyy-MM-dd hh:mm:ss.fff")}");
-
                     Thread.Sleep(3000);
                 }
 
@@ -740,8 +1089,6 @@
 
                 throw;
             }
-
-
             if (usersData.Count > 0)
             {
 
@@ -749,25 +1096,16 @@
 
                 profile.LMSCourseId = usersData[0].Id;
                 LMSid = profile.LMSCourseId;
-
-
-
             }
-
-
             return LMSid;
         }
 
         private static CourseScheduleProfile GetCourseScheduleProfile(CourseSchedule schedule)
         {
-
-
             //Doues the CategoryID Exists? Yes=Move On otherwise create it
 
             var configBuilder = new ConfigurationBuilder().AddJsonFile("Settings.json").Build();
             var configsession = configBuilder.GetSection("LMSCreateCourse");
-
-
             CourseScheduleProfile profile = new CourseScheduleProfile();
 
             profile.wstoken = configsession.GetSection("LMSToken").Value.Trim();
@@ -781,24 +1119,94 @@
             profile.StartDate = DateTime.Now.ToString().ToInteger();
 
             profile.EndDate = DateTime.Now.AddYears(10).ToString().ToInteger();
-
-
-
             // Find out which category is current
             //profile.CategoryId  = $"{schedule.YearId.LastFourCharacters()}{schedule.SemesterId}";      
             profile.CategoryId = $"{DateTime.Now.Year}";
 
             profile.ShortName = $@"{schedule.ExamCode.ToUpper()}";
             profile.courseid = $@"{schedule.ExamCode.ToUpper()}";// {schedule.YearId.LastTwoCharacters()}{schedule.SemesterId}";//schedule.CourseCode.ToUpper();
-
-
             profile.CourseTitle = $"{profile.courseid}-{schedule.ExamTitle}";
             profile.CourseDescription = $@"This course is {schedule.ExamTitle} ...";
-
-
             return profile;
+        }
+
+
+        private static string CreateDiet(string categoryName, string categoryId)
+        {
+
+            string catid = string.Empty;
+            bool found = false;
+            var configBuilder = new ConfigurationBuilder().AddJsonFile("Settings.json").Build();
+            var configsession = configBuilder.GetSection("LMSCreateCourse");
+            string wstoken = configsession.GetSection("LMSToken").Value.Trim();
+            string LMSUrl = configsession.GetSection("LMSUrl").Value.Trim();
+            string wsfunction = configsession.GetSection("WSfunction").Value.Trim();
+            string moodlewsrestformat = configsession.GetSection("Moodlewsrestformat").Value.Trim();
+           // string rootcategoryid = configsession.GetSection("RootCategoryId").Value.Trim();
+            var client = new HttpClient();
+            string apiUrl = $@"{LMSUrl}/webservice/rest/server.php?wstoken={wstoken}&wsfunction=core_course_get_categories&moodlewsrestformat=json&criteria[0][key]=idnumber&criteria[0][value]={categoryId}";
+            var request = new HttpRequestMessage(HttpMethod.Get, apiUrl);
+            var response = client.SendAsync(request).GetAwaiter().GetResult();
+            response.EnsureSuccessStatusCode();
+            var ProfileTransmitedFeedBack = response.Content.ReadAsStringAsync().GetAwaiter().GetResult();
+            string aa = ProfileTransmitedFeedBack.ToString();
+            if (ProfileTransmitedFeedBack.ToString() == "[]")
+            {
+                //  Itdoes notexists  - Createit
+                client.Dispose();
+                client = new HttpClient();
+
+                apiUrl = $@"{LMSUrl}/webservice/rest/server.php?wstoken={wstoken}&wsfunction=core_course_create_categories&moodlewsrestformat=json&categories[0][name]={categoryName}&categories[0][parent]={"0"}&categories[0][idnumber]={categoryId}";
+                request = new HttpRequestMessage(HttpMethod.Post, apiUrl);
+                response = client.SendAsync(request).GetAwaiter().GetResult();
+                response.EnsureSuccessStatusCode();
+                ProfileTransmitedFeedBack = response.Content.ReadAsStringAsync().GetAwaiter().GetResult();
+                aa = ProfileTransmitedFeedBack.ToString();
+                //catid
+                List<CreateCategoryResponse> cat = JsonConvert.DeserializeObject<List<CreateCategoryResponse>>(ProfileTransmitedFeedBack);
+                foreach (CreateCategoryResponse itm in cat)
+                {
+                    if (itm.Name.ToLower().Contains(categoryId))
+                    {
+                        catid = itm.Id.ToString();
+                        found = true;
+                        break;
+                    }
+                    if (found != true)
+                    {
+                        continue;
+                    }
+                }
+            }
+            else
+            {
+                List<CreateCourseCategoryResponse> usersData = JsonConvert.DeserializeObject<List<CreateCourseCategoryResponse>>(ProfileTransmitedFeedBack);
+                foreach (CreateCourseCategoryResponse itms in usersData)
+                {
+                    if (itms.IdNumber.ToLower().Contains(categoryId))
+                    {
+                        catid = itms.Id.ToString();
+                        found = true;
+                        break;
+                    }
+                    if (found != true)
+                    {
+                        continue;
+                    }
+                }
+
+                // cat id
+            }
+            // Create it if there is error
+
+
+            _log4net.Info(aa);
+            //try
+           
+            return catid;
 
         }
+
 
         private static string CreateCategory(string categoryId, string categoryName)
         {
@@ -807,31 +1215,17 @@
             bool found = false;
             var configBuilder = new ConfigurationBuilder().AddJsonFile("Settings.json").Build();
             var configsession = configBuilder.GetSection("LMSCreateCourse");
-
-
-
             string wstoken = configsession.GetSection("LMSToken").Value.Trim();
-
             string LMSUrl = configsession.GetSection("LMSUrl").Value.Trim();
-
             string wsfunction = configsession.GetSection("WSfunction").Value.Trim();
-
             string moodlewsrestformat = configsession.GetSection("Moodlewsrestformat").Value.Trim();
             string rootcategoryid = configsession.GetSection("RootCategoryId").Value.Trim();
-
-
-
             var client = new HttpClient();
-
             string apiUrl = $@"{LMSUrl}/webservice/rest/server.php?wstoken={wstoken}&wsfunction=core_course_get_categories&moodlewsrestformat=json&criteria[0][key]=idnumber&criteria[0][value]={"EXAM"}";
-
-
             var request = new HttpRequestMessage(HttpMethod.Get, apiUrl);
             var response = client.SendAsync(request).GetAwaiter().GetResult();
             response.EnsureSuccessStatusCode();
-
             var ProfileTransmitedFeedBack = response.Content.ReadAsStringAsync().GetAwaiter().GetResult();
-
             string aa = ProfileTransmitedFeedBack.ToString();
             if (ProfileTransmitedFeedBack.ToString() == "[]")
             {
@@ -843,25 +1237,17 @@
                 request = new HttpRequestMessage(HttpMethod.Post, apiUrl);
                 response = client.SendAsync(request).GetAwaiter().GetResult();
                 response.EnsureSuccessStatusCode();
-
                 ProfileTransmitedFeedBack = response.Content.ReadAsStringAsync().GetAwaiter().GetResult();
-
                 aa = ProfileTransmitedFeedBack.ToString();
-
                 //catid
-
                 List<CreateCategoryResponse> cat = JsonConvert.DeserializeObject<List<CreateCategoryResponse>>(ProfileTransmitedFeedBack);
                 foreach (CreateCategoryResponse itm in cat)
                 {
-
                     if (itm.Name.ToLower().Contains("exam"))
                     {
-
                         catid = itm.Id.ToString();
                         found = true;
                         break;
-
-
                     }
                     if (found != true)
                     {
@@ -876,12 +1262,9 @@
                 {
                     if (itms.IdNumber.ToLower().Contains("exam"))
                     {
-
                         catid = itms.Id.ToString();
                         found = true;
                         break;
-
-
                     }
                     if (found != true)
                     {
@@ -959,34 +1342,20 @@
 
                                 registrations.Add(registration);
                             }
-
-
-
-
-
                         }
-
                         dr.Close();
                         cmd.Dispose();
-
-
-
                         if (registrations.Count > 0)
                         {
                             // Send to LMS                      
-
                             foreach (CourseRegistration registration in registrations)
                             {
-
                                 // Send to LMS
-
-
                                 CourseRegistrationProfile profile = GetCourseRegistrationProfile(registration, cnn);
 
                                 if (RegisterStudent(profile) == true)
 
                                 { // Update Student Table 
-
 
                                     cmd = new SqlCommand($"Update [ExamEnrollments] set [Enrolled]=1 where [Id] ={registration.Id}", cnn);
                                     cmd.ExecuteNonQuery();
@@ -994,6 +1363,8 @@
                                     _log4net.Info($"UserID {profile.userid} successfully registered in Course Id={profile.courseid}");
                                 }
 
+                                //Also Registered Students in the General Courses
+                               // RegisterStudentInGeneralCourses(profile, registration);
                             }
 
                         }
@@ -1028,10 +1399,8 @@
             {
                 _log4net.Info(xe.Message);
             }
-
-
         }
-
+   
         private static bool RegisterStudent(CourseRegistrationProfile profile)
         {
             bool ret = false;
@@ -1057,7 +1426,107 @@
 
                         if (usersData == null)
                         {
+                            _log4net.Info($"UserID {profile.userid} - {profile.username} - {ProfileTransmitedFeedBack.ToString()}");
+                            ret = true;
+                        }
+                    }
+                    else
+                    {
+                        _log4net.Warn($"UserID {profile.userid} - {ProfileTransmitedFeedBack.ToString()}");
+                    }
 
+                }
+
+            }
+            catch (Exception ex)
+            {
+
+                _log4net.Error(ex.Message);
+            }
+            return ret;
+        }
+        private static bool GeneralRegisterStudent(GeneralCourseRegistrationProfile profile)
+        {
+            bool ret = false;
+
+            try
+            {
+                // 
+                var client = new HttpClient();
+                string apiUrl = $@"{profile.LMSUrl}/webservice/rest/server.php?wstoken={profile.wstoken}&wsfunction={profile.wsfunction}&moodlewsrestformat={profile.moodlewsrestformat}&enrolments[0][roleid]={profile.roleid}&enrolments[0][userid]={profile.userid}&enrolments[0][courseid]={profile.courseid}";
+
+                var request = new HttpRequestMessage(HttpMethod.Post, apiUrl);
+                var response = client.SendAsync(request).GetAwaiter().GetResult();
+                response.EnsureSuccessStatusCode();
+
+                var ProfileTransmitedFeedBack = response.Content.ReadAsStringAsync().GetAwaiter().GetResult();
+
+                string msg = ProfileTransmitedFeedBack.ToString();
+
+                if (msg.CompareTo("null") != 0)
+                {
+                    if (ProfileTransmitedFeedBack.ToString().Contains("exception") != true)
+                    {
+                        var usersData = JsonConvert.DeserializeObject<List<UserLMS>>(ProfileTransmitedFeedBack);
+
+
+                        if (usersData == null)
+                        {
+                            _log4net.Info($"UserID {profile.userid} - {profile.username} - {ProfileTransmitedFeedBack.ToString()}");
+                            ret = true;
+                        }
+                    }
+                    else
+                    {
+                        _log4net.Warn($"UserID {profile.userid} - {ProfileTransmitedFeedBack.ToString()}");
+                    }
+
+                }
+                else
+                {
+                    ret = true; // this user already enrolled
+                }
+
+            }
+            catch (Exception ex)
+            {
+
+                _log4net.Error(ex.Message);
+            }
+
+
+            return ret;
+        }
+
+        private static bool RegisteredStudent(CourseUnEnrolledProfile profile)
+        {
+            bool ret = false;
+
+            try
+            {
+                // 
+                var client = new HttpClient();
+                // string apiUrl = $@"{profile.LMSUrl}/webservice/rest/server.php?wstoken={profile.wstoken}&wsfunction={profile.wsfunction}&moodlewsrestformat={profile.moodlewsrestformat}&enrolments[0][roleid]={profile.roleid}&enrolments[0][userid]={profile.userid}&enrolments[0][courseid]={profile.courseid}";
+                string apiUrl = $@"{profile.LMSUrl}/webservice/rest/server.php?wstoken={profile.wstoken}&wsfunction={profile.wsfunction}&moodlewsrestformat={profile.moodlewsrestformat}&enrolments[0][userid]={profile.userid}&enrolments[0][courseid]={profile.courseid}";
+
+
+
+                var request = new HttpRequestMessage(HttpMethod.Post, apiUrl);
+                var response = client.SendAsync(request).GetAwaiter().GetResult();
+                response.EnsureSuccessStatusCode();
+
+                var ProfileTransmitedFeedBack = response.Content.ReadAsStringAsync().GetAwaiter().GetResult();
+
+                if (ProfileTransmitedFeedBack != null)
+                {
+                    if (ProfileTransmitedFeedBack.ToString().Contains("exception") != true)
+                    {
+                        var usersData = JsonConvert.DeserializeObject<List<UserLMS>>(ProfileTransmitedFeedBack);
+
+
+                        if (usersData == null)
+                        {
+                            _log4net.Info($"UserID {profile.userid} - {profile.username} - {ProfileTransmitedFeedBack.ToString()}");
                             ret = true;
 
                         }
@@ -1075,8 +1544,6 @@
 
                 _log4net.Error(ex.Message);
             }
-
-
             return ret;
         }
 
@@ -1084,52 +1551,65 @@
         {
             var configBuilder = new ConfigurationBuilder().AddJsonFile("Settings.json").Build();
             var configsession = configBuilder.GetSection("LMSRegistration");
-
-
             CourseRegistrationProfile profile = new CourseRegistrationProfile();
-
             profile.wstoken = configsession.GetSection("LMSToken").Value.Trim();
-
             profile.LMSUrl = configsession.GetSection("LMSUrl").Value.Trim();
-
             profile.wsfunction = configsession.GetSection("ProfileWSfunction").Value.Trim();
-
             profile.roleid = configsession.GetSection("RoleId").Value.Trim();
-
             profile.moodlewsrestformat = configsession.GetSection("Moodlewsrestformat").Value.Trim();
-
             profile.userid = registration.LMSUserId;
             profile.courseid = registration.LMSCourseId;
+            return profile;
+        }
 
+        private static GeneralCourseRegistrationProfile GetGeneralCourseRegistrationProfile(GeneralCourseRegistration registration, SqlConnection cnn)
+        {
+            var configBuilder = new ConfigurationBuilder().AddJsonFile("Settings.json").Build();
+            var configsession = configBuilder.GetSection("LMSGeneralCourseRegistration");
+            GeneralCourseRegistrationProfile profile = new GeneralCourseRegistrationProfile();
+            profile.wstoken = configsession.GetSection("LMSToken").Value.Trim();
+            profile.LMSUrl = configsession.GetSection("LMSUrl").Value.Trim();
+            profile.wsfunction = configsession.GetSection("ProfileWSfunction").Value.Trim();
+            profile.roleid = configsession.GetSection("RoleId").Value.Trim();
+            profile.moodlewsrestformat = configsession.GetSection("Moodlewsrestformat").Value.Trim();
+            profile.userid = registration.LMSUserId;
+            profile.courseid = configsession.GetSection("Enrolments[0][courseid]").Value.Trim();
+            //profile.courseid = "63";
 
             return profile;
 
+        }
+
+
+        private static CourseUnEnrolledProfile GetCourseUnEnrolled(CourseUnEnrolled registration, SqlConnection cnn)
+        {
+            var configBuilder = new ConfigurationBuilder().AddJsonFile("Settings.json").Build();
+            var configsession = configBuilder.GetSection("LMSUnEnrolled");
+            CourseUnEnrolledProfile profile = new CourseUnEnrolledProfile();
+            profile.wstoken = configsession.GetSection("LMSToken").Value.Trim();
+            profile.LMSUrl = configsession.GetSection("LMSUrl").Value.Trim();
+            profile.wsfunction = configsession.GetSection("ProfileWSfunction").Value.Trim();
+            profile.roleid = configsession.GetSection("RoleId").Value.Trim();
+            profile.moodlewsrestformat = configsession.GetSection("Moodlewsrestformat").Value.Trim();
+            profile.userid = registration.LMSUserId;
+            profile.courseid = registration.LMSCourseId;
+            return profile;
         }
 
         private static void PaymentUpdateHandler(object? source)
         {
 
             movingNum = long.Parse(DateTime.Now.ToString("yyyyMMddHHmm"));
-
             var configBuilder = new ConfigurationBuilder().AddJsonFile("Settings.json").Build();
-
             var configsession = configBuilder.GetSection("ConnectionString");
-
             string connectionstring = configsession.GetSection("connectionstring").Value.Trim();
-
-
             var ERPconfigsession = configBuilder.GetSection("ERPSettings");
-
             string authenticationEndPoint = ERPconfigsession.GetSection("AuthRUL").Value.Trim();
-
             string invoiceEndPoint = ERPconfigsession.GetSection("InvoiceEndPoint").Value.Trim();
-
             string paymentEndPoint = ERPconfigsession.GetSection("PaymentEndPoint").Value.Trim();
-
             string BPCodeApplicant = ERPconfigsession.GetSection("BPCodeApplicant").Value.Trim().ToUpper();
             string BPCodeMasters = ERPconfigsession.GetSection("BPCodeMasters").Value.Trim().ToUpper();
             string BPCodePG = ERPconfigsession.GetSection("BPCodePG").Value.Trim().ToUpper();
-
             // BP Codes
             const string application = "JHU-APPL";
             const string masters = "JHU-TUIT";
@@ -1137,21 +1617,16 @@
 
             try
             {
-
                 SqlConnection cnn = new SqlConnection(connectionstring);
                 cnn.Open();
                 while (!isApplicationProcessing == false)
 
                 {
-
-
                     if (cnn.State == ConnectionState.Open)
                     {
-
                         // Stage 1 - Are there pain transactions
                         SqlCommand cmd = new SqlCommand($"Select PT.PaymentTransactionId,PT.PayerId, PT.FullName, PT.ProgrammeId,PT.Email,  PT.Amount, PT.FeeTypeId, PT.PaymentReference, PT.PaymentDescription, PT.PaymentChannel, PT.SessionId, PT.SemesterId, PT.SessionSemester, PT.PaymentDate, FT.FeeTypeCode,FT.BankAccount, PG.ApplicantBPCode from PaymentTransaction PT Join FeeType FT on PT.FeeTypeId=FT.FeeTypeId Join Programme PG on PT.ProgrammeId=PG.ProgrammeId where PT.isTransmitedToERP = 0", cnn);
                         SqlDataReader dr = cmd.ExecuteReader();
-
                         List<PaymentProfile> Paids = new List<PaymentProfile>();
 
                         if (dr.HasRows == true)
@@ -1197,9 +1672,6 @@
                                         Paid.CardCode = BPCodeMasters;
                                         break;
                                 }
-
-
-
                                 Paids.Add(Paid);
                             }
                         }
@@ -1210,37 +1682,27 @@
 
                         if (Paids.Count > 0)
                         {
-
                             //Stage 3, Login to the db is there is no login currently 
                             // Loo=p through paid - 
 
-                            var signinclient = new RestClient(authenticationEndPoint); // The Login endpoint
-                                                                                       // signinclient.Timeout = -1;
+                            var signinclient = new RestClient(authenticationEndPoint); // The Login endpoint                                                                                     // signinclient.Timeout = -1;
                             var signinrequest = new RestRequest("", Method.POST);
-
                             ErpSignInBody signInBody = new ErpSignInBody();
                             signInBody.UserName = ERPconfigsession.GetSection("UserName").Value.Trim();
                             signInBody.Password = ERPconfigsession.GetSection("Passw").Value.Trim();
                             signInBody.CompanyDB = ERPconfigsession.GetSection("CompanyDb").Value.Trim();
-
                             var signIn = System.Text.Json.JsonSerializer.Serialize(signInBody) + "\n" + @"";  // 
-
                             // This block was used to supress the certificate authentication error
                             System.Net.ServicePointManager.SecurityProtocol = System.Net.SecurityProtocolType.Tls | System.Net.SecurityProtocolType.Tls11 | System.Net.SecurityProtocolType.Tls12 | System.Net.SecurityProtocolType.Tls13;
                             ServicePointManager.ServerCertificateValidationCallback += new System.Net.Security.RemoteCertificateValidationCallback(ValidateServerCertificate);
                             ServicePointManager.ServerCertificateValidationCallback = (sender, certificate, chain, sslPolicyErrors) => true;
-
-
                             signinrequest.AddParameter("application/json", signIn, ParameterType.RequestBody);
                             IRestResponse signinresponse = signinclient.Execute(signinrequest);
                             _log4net.Info(signinresponse.Content.ToString());
-
                             if (signinresponse.ResponseStatus == ResponseStatus.Completed)
                             {
                                 // Prepare the invoice and send
-
                                 //   string someJson = @"{ ""CardCode"":""" + BPCode + @""",""DocDate"":""" + docDate + @""",""NumAtCard"":""" + studentName + @""",""U_PortalInvoiceNo"":""" + invoicenumber + @""",""DocumentLines"": [{""LineNum"": " + 0 + @",""ItemCode"":""" + ItemCode + @""",""Quantity"": " + 1 + @", ""Price"": " + Convert.ToInt32(model.Amount) + @"}]}";
-
 
                                 foreach (PaymentProfile payment in Paids)
                                 {
@@ -1281,8 +1743,6 @@
 
                                     _log4net.Info($"Invoice Number: {invoice.U_PortalInvoiceNo} ----- Line Number={doc.LineNum} - Payer ID= {payment.PayerId}");
 
-
-
                                     invoice.DocDate = DateTime.Parse(payment.PaymentDate).ToString("yyyy-MM-dd");// HH:mm:ss.fff");
 
                                     // Then serialize it
@@ -1290,7 +1750,6 @@
                                     var invoiceData = System.Text.Json.JsonSerializer.Serialize(invoice) + "\n" + @"";  // 
 
                                     _log4net.Info(invoiceData);
-
 
                                     var B1session = signinresponse.Cookies.Where(a => a.Name == "B1SESSION").Select(a => a.Value).FirstOrDefault();
                                     var RouteID = signinresponse.Cookies.Where(a => a.Name == "ROUTEID").Select(a => a.Value).FirstOrDefault();
@@ -1308,10 +1767,7 @@
 
                                     invoicerequest.AddParameter("application/json", invoiceData, ParameterType.RequestBody);
                                     IRestResponse invoiceresponse = invoiceclient.Execute(invoicerequest);
-
-
                                     _log4net.Info(invoiceresponse.Content);
-
 
                                     if (invoiceresponse.ResponseStatus == ResponseStatus.Completed)
                                     {
@@ -1357,11 +1813,6 @@
                                         paymentrequest.AddParameter("application/json", paymentData, ParameterType.RequestBody);
                                         IRestResponse paymentresponse = paymentclient.Execute(paymentrequest);
 
-
-
-
-
-
                                         _log4net.Info(paymentresponse.Content);
 
                                         if (paymentresponse.ResponseStatus == ResponseStatus.Completed && paymentresponse.Content.Contains("error") == false)
@@ -1371,26 +1822,19 @@
                                             cmd.ExecuteNonQuery();
                                             cmd.Dispose();
 
-                                            // Update the database : Payment Transaction Table, set isTransmittedToERP = 1 for the payment.Id field
-
+                                            // Update the database : Payment Transaction Table, set isTransmittedToERP = 1 for the payment.Id fiel
                                         }
                                         else
                                         {
                                             Thread.Sleep(120000);
                                         }
-
-
                                     }
-
                                 }
 
-                                // Stage 5, push payment to the invoice 
+                               // Stage 5, push payment to the invoice 
 
                                 // Stage 6, update the PaymentTransaction Table
-
                             }
-
-
                         }
                         else
                         {
@@ -1400,16 +1844,9 @@
 
                             Thread.Sleep(20000);
                             _log4net.Info("The database reconnected");
-
                         }
-
-
-
                     }
-
-
-                    // Try end
-
+                    // Try en
                 }
             }
             catch (Exception ex)
@@ -1417,9 +1854,6 @@
                 _log4net.Error(ex.Message);
                 Thread.Sleep(120000);
             }
-
-
-
         }
 
         /// <summary>
@@ -1437,14 +1871,9 @@
 
         private static void FacultyHandler(object? source)
         {
-
             while (!isApplicationProcessing == false)
-
             {
-
                 _log4net.Info($"Faculty thread in progress");
-
-
                 Thread.Sleep(4000);
             }
         }
@@ -1452,12 +1881,8 @@
         private static void DepartmentHandler(object? sourcej)
         {
             while (!isApplicationProcessing == false)
-
             {
-
                 _log4net.Info($"Department thread in progress");
-
-
                 Thread.Sleep(4000);
             }
         }
@@ -1492,16 +1917,10 @@
 
         private static void CredentialsHandler(object? source)
         {
-
             var configBuilder = new ConfigurationBuilder().AddJsonFile("Settings.json").Build();
             var configsession = configBuilder.GetSection("ConnectionString");
-
             string connectionstring = configsession.GetSection("connectionstring").Value.Trim();
-
             SqlConnection cnn = new SqlConnection(connectionstring);
-
-
-
             try
             {
                 cnn.Open();
@@ -1512,8 +1931,6 @@
                     if (cnn.State == ConnectionState.Open)
                     {
                         // first update the table
-
-
                         SqlCommand cmd = new SqlCommand("Select [MembershipNo],[ProvisionedId] from [ExamEnrollments] where [ActiveStatus]=0 and [isProvisioned]=1", cnn);
                         SqlDataReader dr = cmd.ExecuteReader();
 
@@ -1528,8 +1945,6 @@
                                 existingMember.MembershipNo = dr.GetString(0);
                                 existingMember.Id = int.Parse(dr.GetValue(1).ToString());
                                 existingMembers.Add(existingMember);
-
-
                             }
 
                             dr.Close();
@@ -1537,12 +1952,11 @@
 
                             foreach (MemberProfile member in existingMembers)
                             {
+                                //cmd = new SqlCommand($"update [ExamEnrollments] set [IsProvisioned] = 1, [ProvisionedId]= {member.Id}, Enrolled=0 where [MembershipNo]='{member.MembershipNo}'", cnn);
                                 cmd = new SqlCommand($"update [ExamEnrollments] set [IsProvisioned] = 1, [ProvisionedId]= {member.Id} where [MembershipNo]='{member.MembershipNo}'", cnn);
                                 cmd.ExecuteNonQuery();
                                 cmd.Dispose();
                             }
-
-
                         }
 
                         dr.Close();
@@ -1569,17 +1983,11 @@
                                 {
                                     members.Add(member);
                                 }
-
                             }
-
-
-
                         }
 
                         dr.Close();
                         cmd.Dispose();
-
-
 
                         if (members.Count > 0)
                         {
@@ -1594,17 +2002,15 @@
 
                                 { // Update Student Table 
 
-                                    cmd = new SqlCommand($"Update ExamEnrollments set [ProvisionedId]={profile.Id}, [isProvisioned]=1 where [Id] ={member.Id}", cnn);
+                                    // cmd = new SqlCommand($"Update ExamEnrollments set [ProvisionedId]={profile.Id}, [isProvisioned]=1,[Enrolled]=0 where [Id] ={member.Id}", cnn);
+                                    cmd = new SqlCommand($"Update ExamEnrollments set [ProvisionedId]={profile.Id}, [isProvisioned]=1  where [Id] ={member.Id}", cnn);
                                     cmd.ExecuteNonQuery();
                                     cmd.Dispose();
+                                    _log4net.Info($"Updated ExamEnrollment for User #Id={member.Id}");
 
                                 }
-
                             }
-
                         }
-
-
                         Thread.Sleep(20000);
                     }
                     else
@@ -1615,25 +2021,17 @@
                             cnn.Close();
                             cnn.Open();
                             _log4net.Info("Previous connection expired and was reestablished");
-
                         }
                         catch (Exception xe)
                         {
                             _log4net.Error(xe.Message);
                         }
-
                         Thread.Sleep(1000);
                     }
-
-
-
-
-
                     _log4net.Info($"Registration Broker firing {DateTime.Now.ToString("yyyy-MM-dd hh:mm:ss.fff")}");
 
                     Thread.Sleep(3000);
                 }
-
             }
             catch (Exception xe)
             {
@@ -1725,25 +2123,40 @@
                             // get the 
                             client.Dispose();
                             client = new HttpClient();
-                            string apiUrlW = $@"{profile.LMSUrl}/webservice/rest/server.php?wstoken={profile.wstoken}&wsfunction=core_user_get_users&moodlewsrestformat=json&criteria[0][key]=email&criteria[0][value]={profile.email}";
+                            string apiUrlget = $@"{profile.LMSUrl}/webservice/rest/server.php?wstoken={profile.wstoken}&wsfunction=core_user_get_users&moodlewsrestformat=json&criteria[0][key]=email&criteria[0][value]={profile.email}";
                             // http://cbt.cipmnigeria.org/webservice/rest/server.php?wstoken=•••••••&wsfunction=core_user_get_users&moodlewsrestformat=json&criteria[0][key]=email&criteria[0][value]=teststudent1@email.com
-                            var requestw = new HttpRequestMessage(HttpMethod.Get, apiUrl);
+                            var requestw = new HttpRequestMessage(HttpMethod.Get, apiUrlget);
                             var responseW = client.SendAsync(requestw).GetAwaiter().GetResult();
                             responseW.EnsureSuccessStatusCode();
 
                             var GetProfileTransmitedFeedBack = responseW.Content.ReadAsStringAsync().GetAwaiter().GetResult();
 
-                            List<UserProfileOnLMS> usersDataw = JsonConvert.DeserializeObject<List<UserProfileOnLMS>>(GetProfileTransmitedFeedBack);
 
-                            if (usersDataw.Count > 0)
+                            if (GetProfileTransmitedFeedBack.ToString().Contains("exception") != true)
                             {
-                                profile.Id = usersDataw[0].Id;
-                                ret = true;
+                                //List<LMSUserObject> usersDataw = JsonConvert.DeserializeObject<List<LMSUserObject>>(GetProfileTransmitedFeedBack);
+
+                                LMSUserObject rootObject = JsonConvert.DeserializeObject<LMSUserObject>(GetProfileTransmitedFeedBack);
+                                List<UserRetrievedLMS> users = rootObject.Users;
+
+                                if (users.Count > 0)
+                                {
+                                    profile.Id = users[0].Id;
+                                    ret = true;
+                                }
+                                else
+                                {  //there was erroe
+                                    List<UserProfileOnLMSError> usrError = JsonConvert.DeserializeObject<List<UserProfileOnLMSError>>(GetProfileTransmitedFeedBack);
+                                    if (usrError.Count > 0)
+                                    {
+                                        // make corretion
+                                        ret = false;
+                                    }
+                                }
 
                             }
 
                         }
-
                     }
                 }
 
@@ -1758,7 +2171,4 @@
         }
 
     }
-
-
-
 }

@@ -9,7 +9,7 @@ namespace CIPMBroker.Models
     public class FeeType
     {
         public int FeeTypeId { get; set; }
-        public string FeeTypeName { get; set; }
+        public string FeeTypeName { get; set; } 
         public string FeeTypeCode { get; set; }
         public System.DateTime CreatedDate { get; set; }
         public string CreatedBy { get; set; }
