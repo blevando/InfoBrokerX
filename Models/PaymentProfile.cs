@@ -9,6 +9,8 @@ namespace InfoBroker.Models
     public class PaymentProfile
     {
         public int Id { get; internal set; }
+        //public int Id { get; internal set; }
+        public int PaymentTransactionId { get; set; }
         public string PayerId { get;  set; }
         public string FullName { get;  set; }
         public int ProgrammeId { get;   set; }

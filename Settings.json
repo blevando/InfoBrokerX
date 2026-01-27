@@ -13,7 +13,11 @@
     "ProfileWSfunction": "enrol_manual_enrol_users",
     "RoleID": "5",
     "Moodlewsrestformat": "json",
-    "CurrentYearId": "23",
+    //"CurrentYearId": "2023/2024",
+    //"CurrentYearId": "2024/2025",
+    //"CurrentYearId": "2025/2026",
+    //"CurrentSemesterId": "2"
+    "CurrentYearId": "2025/2026 September",
     "CurrentSemesterId": "1"
 
   },
@@ -22,10 +26,51 @@
     "LMSToken": "b518381f52382ff8000fe176470f122b",
     "WSfunction": "core_course_create_courses",
     "CategoryId": "10",
-    "StartDate": "2023-08-27",
-    "EndDate": "2024-02-28",
-    "Moodlewsrestformat": "json"
+    //"StartDate": "2024-07-01",
+    //"EndDate": "2024-12-31",
+    "StartDate": "2025-03-31",
+    "EndDate": "2025-12-31",
+    "Moodlewsrestformat": "json",
+    "RootCategoryId": "2"
   },
+
+  "LMSGetGrade": {
+    "LMSUrl": "https://class.jhu.edu.ng",
+    //"LMSToken": "817f2f9d07ebb55d7184c687cd970eee",
+    "LMSToken": "b518381f52382ff8000fe176470f122b",
+    "WSfunction": "gradereport_overview_get_course_grades",
+    "Moodlewsrestformat": "json"
+
+  },
+  "LMSDeleteCourses": {
+    "LMSUrl": "https://class.jhu.edu.ng",
+    //"LMSToken": "817f2f9d07ebb55d7184c687cd970eee",
+    "LMSToken": "b518381f52382ff8000fe176470f122b",
+    "WSfunction": "core_course_delete_courses",
+    "Moodlewsrestformat": "json"
+
+  },
+  "LMSSuspendUser": {
+    "LMSUrl": "https://class.jhu.edu.ng",
+    //"LMSToken": "817f2f9d07ebb55d7184c687cd970eee",
+    "LMSToken": "b518381f52382ff8000fe176470f122b",
+    "WSfunction": "core_user_update_users",
+    "Moodlewsrestformat": "json",
+    "Suspend": "1"
+
+  },
+  "LMSUnEnrolled": {
+    "LMSUrl": "https://class.jhu.edu.ng",
+    //"LMSRegistrationToken": "817f2f9d07ebb55d7184c687cd970eee",
+    "LMSToken": "b518381f52382ff8000fe176470f122b",
+    "ProfileWSfunction": "enrol_manual_unenrol_users",
+    "RoleID": "5",
+    "Moodlewsrestformat": "json",
+    "CurrentYearId": "25",
+    "CurrentSemesterId": "2"
+
+  },
+
   //"ERPSettings": {
   //"AuthRUL": "https://41.138.161.33:50000/b1s/v1/Login",
   //"https": null, //41.138.161.33:50000/b1s/v1/Login
@@ -36,7 +81,7 @@
   //"PaymentEndPoint": "https://41.138.161.33:50000/b1s/v1/IncomingPayments"
 
   "ERPSettings": {
-    "AuthRUL": "https://41.138.161.33:50000/b1s/v1/Login",    
+    "AuthRUL": "https://41.138.161.33:50000/b1s/v1/Login",
     "https": null, //41.138.161.33:50000/b1s/v1/Login
     "UserName": "eduportal",
     "Passw": "P@ss$101",
@@ -45,19 +90,22 @@
     "BPCodeMasters": "MSTD001",
     "BPCodePG": "PGST001",
     "InvoiceEndPoint": "https://41.138.161.33:50000/b1s/v1/Invoices",
-    "PaymentEndPoint": "https://41.138.161.33:50000/b1s/v1/IncomingPayments"
+    "PaymentEndPoint": "https://41.138.161.33:50000/b1s/v1/IncomingPayments",
+    "InvoiceTransactionQueue": "JHUInvoiceTransaction", 
+    "PaymentInstallment": "JHUPaymentInstallment"
 
   },
   "AppSettings": {
-     
+
     "Organization": "James Hope University"
 
   },
   "ConnectionString": {
-    //"connectionstring": "Server= 174.142.93.40;User id=admin1; TrustServerCertificate = True; Password=cy#$89pawer;database=JHU_PortalDatabase"
-    "connectionstring": "Server= 174.142.93.40;User id=eduteam; TrustServerCertificate = True; Password=edu$123team;database=JHU_PortalDatabase"
+    //"connectionstring": "Server= 174.142.93.40;User id=admin1; TrustServerCertificate = True; Password=cy#$89pawer;database=JHU_PortalDatabase",
+    "connectionstring": "Server=72.55.189.251;Initial Catalog=JHU_PortalDatabase;User ID=eduteam;Password=edu$123team;Connect Timeout=30;Encrypt=False;TrustServerCertificate=False;ApplicationIntent=ReadWrite;MultiSubnetFailover=False;MultipleActiveResultSets=true"
+    //"connectionstring": "Server= localhost\\SQL2019;User id=eduteam; TrustServerCertificate = True; Password=edu$123team;database=JHU_PortalDatabase"
+    //"connectionstring": "Server=CYB493-CYBSOFT\\SQL2019;User id =sa;Password=Test_test1; Connection Timeout=300;TrustServerCertificate=true; Database=JHU_PortalDatabase"
 
   }
 
 }
- 

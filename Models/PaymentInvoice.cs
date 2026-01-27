@@ -28,7 +28,7 @@ namespace InfoBroker.Models
         /// </summary>
         public string U_PortalInvoiceNo { get; set; } // invoice number from the poral
 
-        public DocumentLines DocumentLines { get; set; }
+        public DocumentLines[] DocumentLines { get; set; }
 
     }
 }
