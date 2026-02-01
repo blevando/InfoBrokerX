@@ -22,6 +22,9 @@ namespace InfoBroker.Models
         public DateTime ModifiedDate { get; set; }
         [Column(TypeName = "decimal(18,2)")]
         public decimal TotalAmount { get; set; } // Obtained from fees schedule table.
+
+        [Column(TypeName = "decimal(18,2)")]
+        public decimal Balance { get; set; } // Obtained from fees schedule table.
         public string? SessionId { get; set; }
         public string? SemesterId { get; set; }
         public PaymentStatusEnum PaymentStatus { get; set; }
