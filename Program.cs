@@ -867,11 +867,24 @@
                                     {
                                         cmd = new SqlCommand($"update [PaymentInstallment] set [PostStatus] = 1 where [Id] = {item.Key} and [InvoiceNumber] = '{item.Value}'", con);
                                         cmd.ExecuteNonQuery();
-                                        cmd.Dispose(); 
-                                        
-                                        
-                                        cmd = new SqlCommand("Select sum(TotalAmount) from [PaymentInstallment] where [InvoiceNumber]= '{item.Value}' ", con);
-                                        //ToDo
+                                        cmd.Dispose();
+
+                                        string qry = $"UPDATE i SET PaymentStatus =" +
+                                            $"CASE " +
+                                                $"WHEN p.TotalPaid = 0 THEN {(int)PaymentStatusEnum.UnPaid}" +
+                                                $"WHEN p.TotalPaid = i.TotalAmount THEN {(int)PaymentStatusEnum.Paid}" +
+                                                $"WHEN p.TotalPaid < i.TotalAmount THEN {(int)PaymentStatusEnum.PartiallyPaid}" +
+                                                $"ELSE {(int)PaymentStatusEnum.OverPaid}" +
+                                            $"END" +
+                                            $" FROM InvoiceTransactions i JOIN (SELECT InvoiceNumber, SUM(Amount) As TotalPaid" +
+                                            $" FROM PaymentInstallment" +
+                                            $" GROUP BY InvoiceNumber) p" +
+                                            $" ON p.InvoiceNumber = i.InvoiceNumber" +
+                                            $"WHERE p.InvoiceNumber ={item.Value}";
+
+                                        cmd = new SqlCommand(qry, con);
+                                        cmd.ExecuteNonQuery();
+                                        cmd.Dispose();
 
                                     }
                                 }
