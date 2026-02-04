@@ -25,6 +25,7 @@ namespace InfoBroker.Models
 
         [Column(TypeName = "decimal(18,2)")]
         public decimal Balance { get; set; } // Obtained from fees schedule table.
+        public string? BankAccount { get; set; }        
         public string? SessionId { get; set; }
         public string? SemesterId { get; set; }
         public PaymentStatusEnum PaymentStatus { get; set; }

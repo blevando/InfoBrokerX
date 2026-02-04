@@ -25,6 +25,7 @@
     using System.Net.Security;
     using System.Net.Sockets;
     using System.Reflection;
+    using System.Reflection.PortableExecutable;
     using System.Runtime.CompilerServices;
     using System.Security.Cryptography.X509Certificates;
     using System.Text;
@@ -63,17 +64,21 @@
 
             Thread Credentials = null;
             Thread UpdatePayment = null;
+
             Thread InvoiceProcessor = null;
             Thread PaymentProcessor = null;
             Thread PaymentPosting = null;
+
             Thread RegisterStudents = null;
             Thread CreateGrading = null;
+
             //Thread Email = null;
+
             Thread CreateCourse;
             Thread DeleteCourses;
             Thread UnEnrollment = null;
             Thread SuspendUser = null;
-            Thread SudentGrads = null;
+            Thread StudentGrads = null;
             Thread RevenueTracker = null;
 
             //Thread updateDepartments;
@@ -83,21 +88,25 @@
             //Thread UpdatePrograms;
 
             Credentials = new Thread(new ParameterizedThreadStart(CredentialsHandler));
-            Credentials.Start();
+            //Credentials.Start();
             Interlocked.Increment(ref threadCount);
 
+            //To be closed completly
             UpdatePayment = new Thread(new ParameterizedThreadStart(PaymentUpdateHandler));
             //UpdatePayment.Start();
             Interlocked.Increment(ref threadCount);
 
+            //Payment - Step 1
             InvoiceProcessor = new Thread(new ParameterizedThreadStart(InvoiceProcessorHandler));
-            InvoiceProcessor.Start();
+            //InvoiceProcessor.Start();
             Interlocked.Increment(ref threadCount);
 
+            //Payment - 2
             PaymentProcessor = new Thread(new ParameterizedThreadStart(PaymentProcessorHandler));
-            PaymentProcessor.Start();
+            //PaymentProcessor.Start();
             Interlocked.Increment(ref threadCount);
 
+            //Payment - 3
             PaymentPosting = new Thread(new ParameterizedThreadStart(PostPaymentAgainstInvoiceProcessor));
             PaymentPosting.Start();
             Interlocked.Increment(ref threadCount);
@@ -105,19 +114,19 @@
 
 
             RegisterStudents = new Thread(new ParameterizedThreadStart(CourseRegistrationHandler));
-            RegisterStudents.Start();
+            //RegisterStudents.Start();
             Interlocked.Increment(ref threadCount);
 
             CreateCourse = new Thread(new ParameterizedThreadStart(CreateCourseHandler));
-            CreateCourse.Start();
+            //CreateCourse.Start();
             Interlocked.Increment(ref threadCount);
 
             CreateGrading = new Thread(new ParameterizedThreadStart(CreateGradingHandler));
-            CreateGrading.Start();
+            //CreateGrading.Start();
             Interlocked.Increment(ref threadCount);
 
-            SudentGrads = new Thread(new ParameterizedThreadStart(GetSudentGradesHandler));
-            SudentGrads.Start();
+            StudentGrads = new Thread(new ParameterizedThreadStart(GetSudentGradesHandler));
+            //StudentGrads.Start();
             Interlocked.Increment(ref threadCount);
 
 
@@ -206,7 +215,10 @@
                     if (con.State == System.Data.ConnectionState.Open)
                     {
                         // One invice that is not yet transmitted 
-                        cmd = new SqlCommand($"Select PT.PaymentTransactionId,PT.PayerId, PT.FullName, PT.ProgrammeId,PT.Email,  PT.Amount, PT.FeeTypeId, PT.PaymentReference, PT.PaymentDescription, PT.PaymentChannel, PT.SessionId, PT.SemesterId, PT.SessionSemester, PT.PaymentDate, FT.FeeTypeCode,FT.BankAccount, PG.ApplicantBPCode, PG.ApplicantAcceptBPCode, PG.StudentBPCode from PaymentTransaction PT Join FeeType FT on PT.FeeTypeId=FT.FeeTypeId Join Programme PG on PT.ProgrammeId=PG.ProgrammeId where PT.isTransmitedToERP = 0", con);
+                        cmd = new SqlCommand(@$"Select PT.PaymentTransactionId,PT.PayerId, PT.FullName, PT.ProgrammeId,PT.Email,  PT.Amount, PT.FeeTypeId, PT.PaymentReference, PT.PaymentDescription, PT.PaymentChannel, PT.SessionId, PT.SemesterId, PT.SessionSemester, PT.PaymentDate, FT.FeeTypeCode,FT.BankAccount, PG.ApplicantBPCode, PG.ApplicantAcceptBPCode, PG.StudentBPCode 
+                                            from PaymentTransaction PT Join FeeType FT on PT.FeeTypeId=FT.FeeTypeId 
+                                            Join Programme PG on PT.ProgrammeId=PG.ProgrammeId 
+                                            where PT.isTransmitedToERP = 0", con);
                         SqlDataReader reader = cmd.ExecuteReader();
                         if (reader.HasRows == true)
                         {
@@ -247,12 +259,49 @@
                     // Send transactions to Queue for onward processing
                     if (paymentInstallments.Count > 0)
                     {
+
                         MessageQueue q = new MessageQueue(PaymentInstallmentQueue);
                         q.DefaultPropertiesToSend.Recoverable = true; // Ensure disk storage
                         q.DefaultPropertiesToSend.Priority = MessagePriority.High;
 
                         foreach (var trans in paymentInstallments)
                         {
+                            if (trans.SemesterId == 0)
+                            {
+                                try
+                                {
+                                    if (con.State == ConnectionState.Open)
+                                    {
+                                        cmd = new SqlCommand($"Select [SemesterId] from [SessionSemester] where [SessionId]={trans.SessionId} and [ProgrammeId]={trans.ProgrammeId} and [Status]= 1 order by [SessionSemesterId] desc", con);
+                                        SqlDataReader r = cmd.ExecuteReader();
+                                        if (r.HasRows == true)
+                                        {
+                                            while (r.Read() == true)
+                                            {
+                                                trans.SemesterId = r.IsDBNull(0) ? 1 : int.Parse(r.GetValue(0).ToString());
+                                            }
+                                        }
+                                        r.Close();
+                                        cmd.Dispose();
+                                    }
+                                    else
+                                    {
+                                        con.Close(); // Ensure it is closed
+                                        con.Dispose();// Dispose it
+
+                                        con.Open(); // Open it again
+                                        continue;
+
+                                    }
+                                }
+                                catch (Exception ex)
+                                {
+
+                                    _log4net.Error($"Error setting SemesterId: {ex.Message}");
+                                    trans.SemesterId = 1; // Default to 1
+                                }
+                            }
+
                             try
                             {
                                 q.Label = $"{trans.PaymentTransactionId}-{trans.FeeTypeId}-{trans.FullName}";
@@ -265,9 +314,11 @@
 
                                 _log4net.Error($"Error probing Payments {ex.Message}");
                             }
-                            Thread.Sleep(5000);
+
                         }
+
                         q.Dispose();
+                        Thread.Sleep(5000);
 
                     }
                     else
@@ -283,7 +334,7 @@
 
                     _log4net.Error($"Error probing Payments {ex.Message}");
                 }
-                Thread.Sleep(50000);
+                Thread.Sleep(5000);
             }
 
         }
@@ -292,17 +343,18 @@
             if (con.State == ConnectionState.Open)
             {
 
-                SqlCommand cmd = new SqlCommand($"Update [PaymentTransaction] set [isTransmitedToERP]= 1 where [isTransmitedToERP] = 0", con);
+                SqlCommand cmd = new SqlCommand($"Update [PaymentTransaction] set [isTransmitedToERP]= 1 where [paymentTransactionId] = {paymentTransactionId} and [isTransmitedToERP] = 0", con);
                 try
                 {
                     cmd.ExecuteNonQuery();
-                    _log4net.Info($"PaymentTransactionId {paymentTransactionId} Queued for onward processing");
+                    _log4net.Info($"Invoice with PaymentTransactionId {paymentTransactionId} Queued for onward processing");
+                    cmd.Dispose();
                 }
                 catch (Exception ex)
                 {
-
-                    _log4net.Error($"Error in Updating PaymentTransaction: {ex.Message}");
+                    _log4net.Error($"Error in Updating PaymentTransaction:{paymentTransactionId}: {ex.Message}");
                 }
+                cmd.Dispose();
             }
 
         }
@@ -316,9 +368,10 @@
             {
                 try
                 {
-                    MessageQueue queue = new MessageQueue(@$".\Private$\{PaymentInstallmentQueue}");
+                    MessageQueue queue = new MessageQueue(PaymentInstallmentQueue);
                     queue.Formatter = new XmlMessageFormatter(new Type[] { typeof(PTrans) });
                     _log4net.Info($"Payment Processor Broker firing {DateTime.Now.ToString("yyyy-MM-dd hh:mm:ss.fff")}");
+
                     queue.PeekCompleted += new PeekCompletedEventHandler(InvoicePeekHandler);
                     queue.BeginPeek();
 
@@ -328,7 +381,7 @@
                 {
                     _log4net.Error($"Error in Processing Payment Transactions: {ex.Message}");
                 }
-                Thread.Sleep(30000);
+                Thread.Sleep(3000000);
             }
         }
 
@@ -337,17 +390,18 @@
         {
             MessageQueue mq = (MessageQueue)source;
             Message m = mq.EndPeek(e.AsyncResult);
+
             var paymentTrans = (PTrans)m.Body;
             _log4net.Info($"Processing PaymentTransactionId {paymentTrans.PaymentTransactionId} for {paymentTrans.FullName}");
 
 
             string? InvoiceNumber = ProcessInvoiceTransaction(paymentTrans);
 
-            _log4net.Info($"PaymentTransactionId {paymentTrans.PaymentTransactionId} processed with Invoice Number {InvoiceNumber}");
             if (InvoiceNumber != null)
             {
+                _log4net.Info($"PaymentTransactionId {paymentTrans.PaymentTransactionId} processed with Invoice Number {InvoiceNumber}");
 
-                //  PostPaymentAgainstInvoiceTransaction(InvoiceNumber, paymentTrans);
+                // PostPaymentAgainstInvoiceTransaction(InvoiceNumber, paymentTrans);
 
                 mq.ReceiveById(m.Id);
             }
@@ -369,322 +423,322 @@
         private static string? ProcessInvoiceTransaction(PTrans paymentTrans)
         {
             string? invoiceNumber = null;
-            string connectionstring = System.Configuration.ConfigurationManager.ConnectionStrings["connectionstring"].ConnectionString;
-            SqlConnection con = new SqlConnection(connectionstring);
-            con.Open();
-            SqlCommand cmd = null;
-            movingNum = long.Parse(DateTime.Now.ToString("yyyyMMddHHmm"));
-            movingNum = movingNum + 1;
-
-            lnNumber = lnNumber;
-            if (lnNumber > 100)
+            DocumentLines[] doc = new DocumentLines[1];
+            try
             {
-                lnNumber = 1;
-            }
-            string NumAtCard = $"{paymentTrans.PayerId}-{paymentTrans.FullName.Replace(',', ' ')}";
 
-            if (con.State == System.Data.ConnectionState.Open)
-            {
-                // One invice that is not yet transmitted 
-                cmd = new SqlCommand($"Select [InvoiceNumber] from [InvoiceTransactions] where MatricNumber='{paymentTrans.PayerId}' SessionId={paymentTrans.SessionId} and SemesterId={paymentTrans.SemesterId} and ", con);
-                SqlDataReader reader = cmd.ExecuteReader();
-                if (reader.HasRows == true)
+                string connectionstring = System.Configuration.ConfigurationManager.ConnectionStrings["connectionstring"].ConnectionString;
+                SqlConnection con = new SqlConnection(connectionstring);
+                con.Open();
+                SqlCommand cmd = null;
+                movingNum = long.Parse(DateTime.Now.ToString("yyyyMMddHHmm"));
+                movingNum = movingNum + 1;
+
+                //lnNumber = lnNumber;
+                //if (lnNumber > 100)
+                //{
+                //    lnNumber = 1;
+                //}
+                string NumAtCard = $"{paymentTrans.PayerId}-{paymentTrans.FullName.Replace(',', ' ')}";
+
+                if (con.State == System.Data.ConnectionState.Open)
                 {
-                    // It exists
-                    //This student already has an invoice for this session and semester
-                    while (reader.Read() == true)
+                    // One invice that is not yet transmitted 
+                    cmd = new SqlCommand($"Select [InvoiceNumber] from [InvoiceTransactions] where [MatricNumber] = '{paymentTrans.PayerId}' and [SessionId] = {paymentTrans.SessionId} and [SemesterId] = {paymentTrans.SemesterId}", con);
+                    SqlDataReader reader = cmd.ExecuteReader();
+                    if (reader.HasRows == true)
                     {
-                        invoiceNumber = reader.IsDBNull(0) ? "" : reader.GetString(0).ToString();
+                        // It exists
+                        //This student already has an invoice for this session and semester
+                        while (reader.Read() == true)
+                        {
+                            invoiceNumber = reader.IsDBNull(0) ? "" : reader.GetString(0).ToString();
+                        }
+
+                        reader.Close();
+                        cmd.Dispose();
+
+
                     }
-
-                    reader.Close();
-                    cmd.Dispose();
-
-
-                }
-                else
-                {
-                    //This invoice does not exist, create new invoice in ERP System
-                    reader.Close();
-                    cmd.Dispose();
-
-
-
-
-                    var configBuilder = new ConfigurationBuilder().AddJsonFile("Settings.json").Build();
-
-
-                    var ERPconfigsession = configBuilder.GetSection("ERPSettings");
-
-                    string authenticationEndPoint = ERPconfigsession.GetSection("AuthRUL").Value.Trim();
-
-                    string invoiceEndPoint = ERPconfigsession.GetSection("InvoiceEndPoint").Value.Trim();
-
-                    string paymentEndPoint = ERPconfigsession.GetSection("PaymentEndPoint").Value.Trim();
-
-                    string BPCodeApplicant = ERPconfigsession.GetSection("BPCodeApplicant").Value.Trim().ToUpper();
-                    string BPCodeMasters = ERPconfigsession.GetSection("BPCodeMasters").Value.Trim().ToUpper();
-                    string BPCodePG = ERPconfigsession.GetSection("BPCodePG").Value.Trim().ToUpper();
-
-                    // BP Codes
-                    const string application = "JHU-APPL";
-                    const string masters = "JHU-TUIT";
-                    const string pg = "JHU-PGDT";
-
-                    //Insert new Invoice Transaction into ERP System and get the Invoice Number
-                    //1. Login to ERP System and get the Token
-                    //2. Create Invoice Transaction Object
-                    //3. Send Invoice Transaction to ERP System
-                    //4. Get the Invoice Number from ERP System Response
-
-                    var signinclient = new RestClient(authenticationEndPoint); // The Login endpoint
-                                                                               // signinclient.Timeout = -1;
-                    var signinrequest = new RestRequest("", Method.POST);
-
-                    ErpSignInBody signInBody = new ErpSignInBody();
-                    signInBody.UserName = ERPconfigsession.GetSection("UserName").Value.Trim();
-                    signInBody.Password = ERPconfigsession.GetSection("Passw").Value.Trim();
-                    signInBody.CompanyDB = ERPconfigsession.GetSection("CompanyDb").Value.Trim();
-
-                    var signIn = System.Text.Json.JsonSerializer.Serialize(signInBody) + "\n" + @"";  // 
-
-                    // This block was used to supress the certificate authentication error
-                    System.Net.ServicePointManager.SecurityProtocol = System.Net.SecurityProtocolType.Tls | System.Net.SecurityProtocolType.Tls11 | System.Net.SecurityProtocolType.Tls12 | System.Net.SecurityProtocolType.Tls13;
-                    ServicePointManager.ServerCertificateValidationCallback += new System.Net.Security.RemoteCertificateValidationCallback(ValidateServerCertificate);
-                    ServicePointManager.ServerCertificateValidationCallback = (sender, certificate, chain, sslPolicyErrors) => true;
-
-
-                    signinrequest.AddParameter("application/json", signIn, ParameterType.RequestBody);
-                    IRestResponse signinresponse = signinclient.Execute(signinrequest);
-                    _log4net.Info(signinresponse.Content.ToString());
-
-                    if (signinresponse.ResponseStatus == ResponseStatus.Completed)
+                    else
                     {
-                        // Prepare the invoice and send
+                        //This invoice does not exist, create new invoice in ERP System
+                        reader.Close();
+                        cmd.Dispose();
 
-                        //string someJson = @"{ ""CardCode"":""" + BPCode + @""",""DocDate"":""" + docDate + @""",""NumAtCard"":""" + studentName + @""",""U_PortalInvoiceNo"":""" + invoicenumber + @""",""DocumentLines"": [{""LineNum"": " + 0 + @",""ItemCode"":""" + ItemCode + @""",""Quantity"": " + 1 + @", ""Price"": " + Convert.ToInt32(model.Amount) + @"}]}";
 
-                        string CardCode = "";
-                        switch (paymentTrans.FeeTypeCode.Trim().ToUpper())
+
+
+                        var configBuilder = new ConfigurationBuilder().AddJsonFile("Settings.json").Build();
+
+
+                        var ERPconfigsession = configBuilder.GetSection("ERPSettings");
+
+                        string authenticationEndPoint = ERPconfigsession.GetSection("AuthRUL").Value.Trim();
+
+                        string invoiceEndPoint = ERPconfigsession.GetSection("InvoiceEndPoint").Value.Trim();
+
+                        string paymentEndPoint = ERPconfigsession.GetSection("PaymentEndPoint").Value.Trim();
+
+                        string BPCodeApplicant = ERPconfigsession.GetSection("BPCodeApplicant").Value.Trim().ToUpper();
+                        string BPCodeMasters = ERPconfigsession.GetSection("BPCodeMasters").Value.Trim().ToUpper();
+                        string BPCodePG = ERPconfigsession.GetSection("BPCodePG").Value.Trim().ToUpper();
+
+                        // BP Codes
+                        const string application = "JHU-APPL";
+                        const string masters = "JHU-TUIT";
+                        const string pg = "JHU-PGDT";
+
+                        //Insert new Invoice Transaction into ERP System and get the Invoice Number
+                        //1. Login to ERP System and get the Token
+                        //2. Create Invoice Transaction Object
+                        //3. Send Invoice Transaction to ERP System
+                        //4. Get the Invoice Number from ERP System Response
+
+                        var signinclient = new RestClient(authenticationEndPoint); // The Login endpoint
+                                                                                   // signinclient.Timeout = -1;
+                        var signinrequest = new RestRequest("", Method.POST);
+
+                        ErpSignInBody signInBody = new ErpSignInBody();
+                        signInBody.UserName = ERPconfigsession.GetSection("UserName").Value.Trim();
+                        signInBody.Password = ERPconfigsession.GetSection("Passw").Value.Trim();
+                        signInBody.CompanyDB = ERPconfigsession.GetSection("CompanyDb").Value.Trim();
+
+                        var signIn = System.Text.Json.JsonSerializer.Serialize(signInBody) + "\n" + @"";  // 
+
+                        // This block was used to supress the certificate authentication error
+                        System.Net.ServicePointManager.SecurityProtocol = System.Net.SecurityProtocolType.Tls | System.Net.SecurityProtocolType.Tls11 | System.Net.SecurityProtocolType.Tls12 | System.Net.SecurityProtocolType.Tls13;
+                        ServicePointManager.ServerCertificateValidationCallback += new System.Net.Security.RemoteCertificateValidationCallback(ValidateServerCertificate);
+                        ServicePointManager.ServerCertificateValidationCallback = (sender, certificate, chain, sslPolicyErrors) => true;
+
+
+                        signinrequest.AddParameter("application/json", signIn, ParameterType.RequestBody);
+                        IRestResponse signinresponse = signinclient.Execute(signinrequest);
+                        _log4net.Info(signinresponse.Content.ToString());
+
+                        if (signinresponse.ResponseStatus == ResponseStatus.Completed)
                         {
-                            case application:
-                                CardCode = BPCodeApplicant;
-                                break;
-                            case masters:
-                                CardCode = BPCodeMasters;
-                                break;
-                            case pg:
-                                CardCode = BPCodePG;
-                                break;
-                            default:
-                                CardCode = BPCodeMasters;
-                                break;
-                        }
-                        string ItemCode = "";
-                        switch (paymentTrans.FeeTypeCode.Trim().ToUpper())
-                        {
-                            case "JHU-APPL":
-                                ItemCode = paymentTrans.ApplicantBPCode;
-                                break;
-                            case "JHU-ACCP":
-                                ItemCode = paymentTrans.ApplicantAcceptBPCode;
-                                break;
-                            case "JHU-TUIT":
-                                ItemCode = paymentTrans.StudentBPCode;
-                                break;
-                            default:
-                                ItemCode = paymentTrans.StudentBPCode;
-                                break;
-                        }
-                        //JHU-APPL
-                        //JHU-ACCP
-                        //JHU-TUIT
+                            // Prepare the invoice and send
 
-                        // ItemCode = paymentTrans.StudentBPCode;
-                        //JHU-MTRC
-                        //JHU-LATE
-                        //JHU-PGDT
-                        //JHU-RETN
-                        //JHU-WALT
-                        //JHU-PRECRE
-                        //JHU-SHORT
+                            //string someJson = @"{ ""CardCode"":""" + BPCode + @""",""DocDate"":""" + docDate + @""",""NumAtCard"":""" + studentName + @""",""U_PortalInvoiceNo"":""" + invoicenumber + @""",""DocumentLines"": [{""LineNum"": " + 0 + @",""ItemCode"":""" + ItemCode + @""",""Quantity"": " + 1 + @", ""Price"": " + Convert.ToInt32(model.Amount) + @"}]}";
 
-
-                        // Stage 4, prepare invoice and push to erp and get responce
-                        //lnNumber = lnNumber;
-                        //if (lnNumber > 100)
-                        //{
-                        //    lnNumber = 1;
-                        //}
-
-                        //movingNum = movingNum + 1;
-                        // Get the invoice Amount for the payment transaction
-                        string requiredAmount = "0";
-                        string discount = "0";
-
-                        if (con.State == System.Data.ConnectionState.Open)
-                        {
-                            // One invice that is not yet transmitted 
-
-                            cmd = new SqlCommand($"Select [RequiredAmount],[Discount] from [Invoice_new] where [MatricNumber]='{paymentTrans.PayerId}' and [Session]={paymentTrans.SessionId} and [Semester]={paymentTrans.SemesterId}", con);
-
-                            reader = cmd.ExecuteReader();
-                            if (reader.HasRows == true)
+                            string CardCode = "";
+                            switch (paymentTrans.FeeTypeCode.Trim().ToUpper())
                             {
+                                case application:
+                                    CardCode = BPCodeApplicant;
+                                    break;
+                                case masters:
+                                    CardCode = BPCodeMasters;
+                                    break;
+                                case pg:
+                                    CardCode = BPCodePG;
+                                    break;
+                                default:
+                                    CardCode = BPCodeMasters;
+                                    break;
+                            }
+                            string ItemCode = "";
+                            switch (paymentTrans.FeeTypeCode.Trim().ToUpper())
+                            {
+                                case "JHU-APPL":
+                                    ItemCode = paymentTrans.ApplicantBPCode;
+                                    break;
+                                case "JHU-ACCP":
+                                    ItemCode = paymentTrans.ApplicantAcceptBPCode;
+                                    break;
+                                case "JHU-TUIT":
+                                    ItemCode = paymentTrans.StudentBPCode;
+                                    break;
+                                default:
+                                    ItemCode = paymentTrans.StudentBPCode;
+                                    break;
+                            }
+                            //JHU-APPL
+                            //JHU-ACCP
+                            //JHU-TUIT
 
-                                while (reader.Read() == true)
+                            // ItemCode = paymentTrans.StudentBPCode;
+                            //JHU-MTRC
+                            //JHU-LATE
+                            //JHU-PGDT
+                            //JHU-RETN
+                            //JHU-WALT
+                            //JHU-PRECRE
+                            //JHU-SHORT
+
+
+                            // Get the invoice Amount for the payment transaction
+                            string requiredAmount = "0";
+                            string discount = "0";
+
+                            if (con.State == System.Data.ConnectionState.Open)
+                            {
+                                // One invice that is not yet transmitted 
+
+                                cmd = new SqlCommand($"Select [RequiredAmount],[Discount] from [Invoice_new] where [MatricNumber]='{paymentTrans.PayerId}' and [Session]={paymentTrans.SessionId} and [Semester]={paymentTrans.SemesterId}", con);
+
+                                reader = cmd.ExecuteReader();
+                                if (reader.HasRows == true)
                                 {
-                                    requiredAmount = reader.IsDBNull(0) ? "0" : reader.GetValue(0).ToString();
-                                    discount = reader.IsDBNull(1) ? "0" : reader.GetValue(1).ToString();
+
+                                    while (reader.Read() == true)
+                                    {
+                                        requiredAmount = reader.IsDBNull(0) ? "0" : reader.GetValue(0).ToString();
+                                        discount = reader.IsDBNull(1) ? "0" : reader.GetValue(1).ToString();
+                                    }
+                                    reader.Close();
+                                    cmd.Dispose();
                                 }
                             }
+
+                            //DocumentLines[] doc = new DocumentLines[1];
+                            doc[0] = new DocumentLines
+                            {
+                                ItemCode = ItemCode,
+                                Quantity = 1,
+                                Price = Math.Round(double.Parse(requiredAmount), 2),
+                                LineNum = lnNumber
+                            };
+
+
+
+                            // Create the invoice
+                            // var docs = Array.Empty<DocumentLines>();
+
+                            // docs.Append(doc);
+
+                            PaymentInvoice invoice = new PaymentInvoice();
+                            invoice.NumAtCard = $"{paymentTrans.PayerId}-{paymentTrans.FullName.Replace(',', ' ')}";
+
+                            invoice.DocumentLines = doc;
+                            invoice.U_PortalInvoiceNo = $"JHU-{DateTime.Now.ToString("00yy")}-{paymentTrans.PaymentTransactionId}"; //    $"JHU-{movingNum.ToString().Substring(0, 4)}-{movingNum.ToString().Substring(4, movingNum.ToString().Length - 4)}"; ; // to be handled
+                            invoice.CardCode = CardCode;
+
+                            _log4net.Info($"Invoice Number: {invoice.U_PortalInvoiceNo} ----- Line Number={doc[0].LineNum} - Payer ID= {paymentTrans.PayerId}");
+
+
+
+                            invoice.DocDate = DateTime.Parse(paymentTrans.PaymentDate.ToString()).ToString("yyyy-MM-dd");// HH:mm:ss.fff");
+
+                            // Then serialize it
+
+                            var invoiceData = System.Text.Json.JsonSerializer.Serialize(invoice) + "\n" + @"";  // 
+
+                            _log4net.Info(invoiceData);
+
+                            var B1session = signinresponse.Cookies.Where(a => a.Name == "B1SESSION").Select(a => a.Value).FirstOrDefault();
+                            var RouteID = signinresponse.Cookies.Where(a => a.Name == "ROUTEID").Select(a => a.Value).FirstOrDefault();
+                            string cookie = "B1SESSION=" + B1session.ToString() + "; ROUTEID=" + RouteID.ToString();
+
+
+                            //var B1session = "cecf3b76-4dc9-11ec-8000-005056010273";
+                            //var RouteID = signinresponse.Cookies.Where(a => a.Name == "ROUTEID").Select(a => a.Value).FirstOrDefault();
+
+                            //string cookie = "B1SESSION=" + B1session.ToString() + "; ROUTEID=" + RouteID.ToString();
+
+
+                            var invoiceclient = new RestClient(invoiceEndPoint);
+                            invoiceclient.Timeout = -1;
+                            var invoicerequest = new RestRequest(Method.POST); // It is a post request 
+
+                            invoicerequest.AddHeader("Content-Type", "application/json");
+                            //invoicerequest.AddHeader("Cookie", "B1SESSION=cecf3b76-4dc9-11ec-8000-005056010273; ROUTEID=.node8");
+                            invoicerequest.AddHeader("Cookie", "B1SESSION=" + B1session.ToString() + "; ROUTEID=" + RouteID.ToString());
+                            invoicerequest.AddCookie("B1SESSION", B1session.ToString());
+                            invoicerequest.AddCookie("ROUTEID", RouteID.ToString());
+
+                            invoicerequest.AddParameter("application/json", invoiceData, ParameterType.RequestBody);
+
+
+                            IRestResponse invoiceresponse = invoiceclient.Execute(invoicerequest);
+
+
+                            _log4net.Info(invoiceresponse.Content);
+
+                            string json = invoiceresponse.Content.ToString();
+
+                            var match = Regex.Match(json, "\"DocEntry\"\\s*:\\s*(\\d+)");
+                            int docEntry = 0;
+                            if (match.Success)
+                            {
+                                docEntry = int.Parse(match.Groups[1].Value);
+
+                                invoiceNumber = docEntry.ToString(); // This is the generated Invoice Number
+
+
+                                reader.Close();
+                                cmd.Dispose();
+                                //Insert into Invoice Transaction Table
+                                cmd = new SqlCommand(@"Insert into [InvoiceTransactions] 
+                                   ([MatricNumber],[LastName],[FirstName],[ProgrammeId],[ProgrammeName],[InvoiceNumber],[FeeType],[InvoiceCode],[CreatedDate],[ModifiedDate],[BankAccount], [TotalAmount],[Balance],[SessionId],[SemesterId],[PaymentStatus])
+                            values (@MatricNumber, @LastName,@FirstName,@ProgrammeId,@ProgrammeName,@InvoiceNumber, @FeeType,@InvoiceCode,@CreatedDate,@ModifiedDate,@BankAccount, @TotalAmount,@Balance,@SessionId,@SemesterId,@PaymentStatus)", con);
+
+                                cmd.Parameters.AddWithValue("@MatricNumber", paymentTrans.PayerId);
+                                string[] names = paymentTrans.FullName.Split(new char[] { ' ', ',' });
+                                cmd.Parameters.AddWithValue("@LastName", names[1]);
+                                cmd.Parameters.AddWithValue("@FirstName", names[0]);
+                                cmd.Parameters.AddWithValue("@ProgrammeId", paymentTrans.ProgrammeId);
+                                cmd.Parameters.AddWithValue("@ProgrammeName", paymentTrans.PaymentTransactionId);
+
+                                cmd.Parameters.AddWithValue("@InvoiceNumber", invoiceNumber);
+                                cmd.Parameters.AddWithValue("@FeeType", paymentTrans.FeeTypeCode);
+                                cmd.Parameters.AddWithValue("@InvoiceCode", invoice.U_PortalInvoiceNo);
+                                cmd.Parameters.AddWithValue("@CreatedDate", paymentTrans.PaymentDate);
+                                cmd.Parameters.AddWithValue("@ModifiedDate", paymentTrans.PaymentDate);
+                                cmd.Parameters.AddWithValue("@BankAccount", paymentTrans.BankAccount);
+
+                                cmd.Parameters.AddWithValue("@TotalAmount", doc[0].Price);
+                                double balance = double.Parse(requiredAmount) - double.Parse(paymentTrans.Amount.ToString());
+
+                                cmd.Parameters.AddWithValue("@Balance", balance);
+
+                                cmd.Parameters.AddWithValue("@SessionId", paymentTrans.SessionId);
+                                cmd.Parameters.AddWithValue("@SemesterId", paymentTrans.SemesterId);
+
+                                cmd.Parameters.AddWithValue("@PaymentStatus", 0);
+
+                                cmd.ExecuteNonQuery();
+                                cmd.Dispose();
+
+
+                            }
+
+
                         }
-
-                        DocumentLines[] doc = new DocumentLines[1];
-                        doc[0] = new DocumentLines
-                        {
-                            ItemCode = ItemCode,
-                            Quantity = 1,
-                            Price = Math.Round(double.Parse(requiredAmount), 2),
-                            LineNum = lnNumber
-                        };
-
-
-
-                        // Create the invoice
-                        // var docs = Array.Empty<DocumentLines>();
-
-                        // docs.Append(doc);
-
-                        PaymentInvoice invoice = new PaymentInvoice();
-                        invoice.NumAtCard = $"{paymentTrans.PayerId}-{paymentTrans.FullName.Replace(',', ' ')}";
-
-                        invoice.DocumentLines = doc;
-                        invoice.U_PortalInvoiceNo = $"JHU-{DateTime.Now.ToString("00yy")}-{paymentTrans.PaymentTransactionId}"; //    $"JHU-{movingNum.ToString().Substring(0, 4)}-{movingNum.ToString().Substring(4, movingNum.ToString().Length - 4)}"; ; // to be handled
-                        invoice.CardCode = CardCode;
-
-                        _log4net.Info($"Invoice Number: {invoice.U_PortalInvoiceNo} ----- Line Number={doc[0].LineNum} - Payer ID= {paymentTrans.PayerId}");
-
-
-
-                        invoice.DocDate = DateTime.Parse(paymentTrans.PaymentDate.ToString()).ToString("yyyy-MM-dd");// HH:mm:ss.fff");
-
-                        // Then serialize it
-
-                        var invoiceData = System.Text.Json.JsonSerializer.Serialize(invoice) + "\n" + @"";  // 
-
-                        _log4net.Info(invoiceData);
-
-                        var B1session = signinresponse.Cookies.Where(a => a.Name == "B1SESSION").Select(a => a.Value).FirstOrDefault();
-                        var RouteID = signinresponse.Cookies.Where(a => a.Name == "ROUTEID").Select(a => a.Value).FirstOrDefault();
-                        string cookie = "B1SESSION=" + B1session.ToString() + "; ROUTEID=" + RouteID.ToString();
-
-
-                        //var B1session = "cecf3b76-4dc9-11ec-8000-005056010273";
-                        //var RouteID = signinresponse.Cookies.Where(a => a.Name == "ROUTEID").Select(a => a.Value).FirstOrDefault();
-
-                        //string cookie = "B1SESSION=" + B1session.ToString() + "; ROUTEID=" + RouteID.ToString();
-
-
-                        var invoiceclient = new RestClient(invoiceEndPoint);
-                        invoiceclient.Timeout = -1;
-                        var invoicerequest = new RestRequest(Method.POST); // It is a post request 
-
-                        invoicerequest.AddHeader("Content-Type", "application/json");
-                        //invoicerequest.AddHeader("Cookie", "B1SESSION=cecf3b76-4dc9-11ec-8000-005056010273; ROUTEID=.node8");
-                        invoicerequest.AddHeader("Cookie", "B1SESSION=" + B1session.ToString() + "; ROUTEID=" + RouteID.ToString());
-                        invoicerequest.AddCookie("B1SESSION", B1session.ToString());
-                        invoicerequest.AddCookie("ROUTEID", RouteID.ToString());
-
-                        invoicerequest.AddParameter("application/json", invoiceData, ParameterType.RequestBody);
-
-
-                        IRestResponse invoiceresponse = invoiceclient.Execute(invoicerequest);
-
-
-                        _log4net.Info(invoiceresponse.Content);
-
-                        string json = invoiceresponse.Content.ToString();
-
-                        var match = Regex.Match(json, "\"DocEntry\"\\s*:\\s*(\\d+)");
-                        int docEntry = 0;
-                        if (match.Success)
-                        {
-                            docEntry = int.Parse(match.Groups[1].Value);
-
-                            invoiceNumber = docEntry.ToString(); // This is the generated Invoice Number
-
-
-                            reader.Close();
-                            cmd.Dispose();
-                            //Insert into Invoice Transaction Table
-                            cmd = new SqlCommand("Insert into [NumAtCard],[PortalInvoiceNo], [InvoiceTransactions] ([MatricNumber],[LastName],[FirstName],[ProgrammeId],[ProgrammeName], [InvoiceNumber],[FeeType],[InvoiceCode],[CreatedDate],[ModifiedDate],[TotalAmount],[SessionId],[SemesterId],[PaymentStatus]) values (@MatricNumber, @LastName, @FirstName,@ProgrammeId,@ProgrammeId, @InvoiceNumber, @FeeType, @InvoiceCode), @CreatedDate,@ModifiedDate,@TotalAmount,@SessionId,@SemesterId,@PaymentStatus", con);
-
-                            cmd.Parameters.AddWithValue("@MatricNumber", paymentTrans.PayerId);
-                            string[] names = paymentTrans.FullName.Split(new char[] { ' ' });
-                            cmd.Parameters.AddWithValue("@LastName", names[1]);
-                            cmd.Parameters.AddWithValue("@FirstName", names[0]);
-                            cmd.Parameters.AddWithValue("@ProgrammeId", paymentTrans.ProgrammeId);
-                            cmd.Parameters.AddWithValue("@ProgrammeName", paymentTrans.PaymentTransactionId);
-
-                            cmd.Parameters.AddWithValue("@InvoiceNumber", invoiceNumber);
-                            cmd.Parameters.AddWithValue("@FeeType", paymentTrans.FeeTypeCode);
-                            cmd.Parameters.AddWithValue("@InvoiceCode", invoice.U_PortalInvoiceNo);
-                            cmd.Parameters.AddWithValue("@CreatedDate", paymentTrans.PaymentDate);
-                            cmd.Parameters.AddWithValue("@ModifiedDate", paymentTrans.PaymentDate);
-
-                            cmd.Parameters.AddWithValue("@TotalAmount", doc[0].Price);
-
-                            double balance = double.Parse(requiredAmount) - double.Parse(paymentTrans.Amount.ToString());
-
-                            cmd.Parameters.AddWithValue("@Balance", balance);
-                            cmd.Parameters.AddWithValue("@SessionId", paymentTrans.SessionId);
-                            cmd.Parameters.AddWithValue("@SemesterId", paymentTrans.SemesterId);
-
-                            cmd.Parameters.AddWithValue("@PaymentStatus", 0);
-
-                            cmd.ExecuteNonQuery();
-                            cmd.Dispose();
-
-
-                        }
-
-
+                        reader.Close();
+                        cmd.Dispose();
                     }
-                    reader.Close();
+
+                    // Post the payment against the invoice number
+
+                    cmd = new SqlCommand("Insert into [PaymentInstallment] ([InvoiceNumber],[InstallmentNumber],[Amount],[PaymentDate],[PaymentCode],[PaymentReference],[BankAccount],[PostStatus]) values (@InvoiceNumber, @InstallmentNumber, @Amount, @PaymentDate,@PaymentCode,@PaymentReference, @BankAccount, @PostStatus)", con);
+
+                    // @InvoiceNumber, @InstallmentNumber, @Amount, @PaymentDate,@PaymentCode,@PaymentReference
+
+                    cmd.Parameters.AddWithValue("@InvoiceNumber", invoiceNumber);
+                    cmd.Parameters.AddWithValue("@InstallmentNumber", lnNumber);
+                    cmd.Parameters.AddWithValue("@Amount", paymentTrans.Amount);
+                    cmd.Parameters.AddWithValue("@PaymentDate", paymentTrans.PaymentDate);
+                    cmd.Parameters.AddWithValue("@PaymentCode", doc[0].ItemCode); //verify                  
+                    cmd.Parameters.AddWithValue("@PaymentReference", paymentTrans.PaymentReference);
+                    cmd.Parameters.AddWithValue("@BankAccount", paymentTrans.BankAccount);
+                    cmd.Parameters.AddWithValue("@PostStatus", 0); // Not yet posted
+
+                    cmd.ExecuteNonQuery();
                     cmd.Dispose();
+
                 }
+            }
+            catch (Exception ex)
+            {
 
-                // Post the payment against the invoice number
-
-                cmd = new SqlCommand("Insert into [PaymentInstallment] ([InvoiceNumber],[InstallmentNumber],[Amount],[PaymentDate],[PaymentCode],[PaymentReference],[CustomerName],[BankAccount],[PostStatus]) values (@InvoiceNumber, @InstallmentNumber, @Amount, @PaymentDate,@PaymentCode,@PaymentReference, @CustomerName,@BankAccount, @PostStatus", con);
-
-                // @InvoiceNumber, @InstallmentNumber, @Amount, @PaymentDate,@PaymentCode,@PaymentReference
-
-                cmd.Parameters.AddWithValue("@InvoiceNumber", invoiceNumber);
-                cmd.Parameters.AddWithValue("@InstallmentNumber", lnNumber);
-                cmd.Parameters.AddWithValue("@Amount", paymentTrans.Amount);
-                cmd.Parameters.AddWithValue("@PaymentDate", paymentTrans.PaymentDate);
-                cmd.Parameters.AddWithValue("@PaymentCode", paymentTrans.FeeTypeCode); //verify                  
-                cmd.Parameters.AddWithValue("@PaymentReference", paymentTrans.PaymentReference);
-
-                cmd.Parameters.AddWithValue("@CustomerName", NumAtCard);
-                cmd.Parameters.AddWithValue("@BankAccount", paymentTrans.BankAccount);
-
-
-
-
-                cmd.Parameters.AddWithValue("@PostStatus", 0); // Not yet posted
-
-                cmd.ExecuteNonQuery();
-                cmd.Dispose();
-
-
+                _log4net.Error($"Error processing invoice {paymentTrans.PayerId}: {ex.Message}");
             }
 
             return invoiceNumber;
         }
-        private static void PostPaymentAgainstInvoiceProcessor(object source)
+        private static void PostPaymentAgainstInvoiceProcessor(object? source)
         {
             //Post Payment against the generated Invoice Number
 
@@ -700,6 +754,7 @@
 
                 _log4net.Info(ex.Message);
             }
+
             while (!isApplicationProcessing == false)
             {
 
@@ -882,6 +937,24 @@
                                             $" ON p.InvoiceNumber = i.InvoiceNumber" +
                                             $"WHERE p.InvoiceNumber ={item.Value}";
 
+
+                                        //string qry = $@"UPDATE i
+                                        //                SET PaymentStatus =
+                                        //                    CASE
+                                        //                        WHEN p.TotalPaid IS NULL OR p.TotalPaid = 0 THEN {(int)PaymentStatusEnum.UnPaid}
+                                        //                        WHEN p.TotalPaid = i.TotalAmount THEN {(int)PaymentStatusEnum.Paid}
+                                        //                        WHEN p.TotalPaid < i.TotalAmount THEN {(int)PaymentStatusEnum.PartiallyPaid}
+                                        //                        WHEN p.TotalPaid > i.TotalAmount THEN {(int)PaymentStatusEnum.OverPaid}
+                                        //                    END
+                                        //                FROM InvoiceTransactions i
+                                        //                LEFT JOIN (
+                                        //                    SELECT InvoiceNumber, SUM(Amount) AS TotalPaid
+                                        //                    FROM PaymentInstallment
+                                        //                    GROUP BY InvoiceNumber
+                                        //                ) p ON p.InvoiceNumber = i.InvoiceNumber
+                                        //                WHERE i.InvoiceNumber = {item.Value}";
+
+
                                         cmd = new SqlCommand(qry, con);
                                         cmd.ExecuteNonQuery();
                                         cmd.Dispose();
@@ -917,7 +990,7 @@
 
                     _log4net.Info(ex.Message);
                 }
-
+                Thread.Sleep(10000);
             }
         }
 
@@ -2667,442 +2740,364 @@
 
 
 
-        private static void OldPaymentUpdateHandler(object? source)
-        {
-
-            movingNum = long.Parse(DateTime.Now.ToString("yyyyMMddHHmm"));
-
-            var configBuilder = new ConfigurationBuilder().AddJsonFile("Settings.json").Build();
-
-            var configsession = configBuilder.GetSection("ConnectionString");
-
-            string connectionstring = configsession.GetSection("connectionstring").Value.Trim();
-
-
-            var ERPconfigsession = configBuilder.GetSection("ERPSettings");
-
-            string authenticationEndPoint = ERPconfigsession.GetSection("AuthRUL").Value.Trim();
-
-            string invoiceEndPoint = ERPconfigsession.GetSection("InvoiceEndPoint").Value.Trim();
-
-            string paymentEndPoint = ERPconfigsession.GetSection("PaymentEndPoint").Value.Trim();
-
-            string BPCodeApplicant = ERPconfigsession.GetSection("BPCodeApplicant").Value.Trim().ToUpper();
-            string BPCodeMasters = ERPconfigsession.GetSection("BPCodeMasters").Value.Trim().ToUpper();
-            string BPCodePG = ERPconfigsession.GetSection("BPCodePG").Value.Trim().ToUpper();
-
-            // BP Codes
-            const string application = "JHU-APPL";
-            const string masters = "JHU-TUIT";
-            const string pg = "JHU-PGDT";
-
-            try
-            {
-
-                //
-                SqlConnection cnn = new SqlConnection(connectionstring);
-                cnn.Open();
-                while (!isApplicationProcessing == false)
-                {
-                    //
-                    if (cnn.State == ConnectionState.Open)
-                    {
-
-                        // Stage 1 - Are there pain transactions
-                        SqlCommand cmd = new SqlCommand($"Select PT.PaymentTransactionId,PT.PayerId, PT.FullName, PT.ProgrammeId,PT.Email,  PT.Amount, PT.FeeTypeId, PT.PaymentReference, PT.PaymentDescription, PT.PaymentChannel, PT.SessionId, PT.SemesterId, PT.SessionSemester, PT.PaymentDate, FT.FeeTypeCode,FT.BankAccount, PG.ApplicantBPCode, PG.ApplicantAcceptBPCode, PG.StudentBPCode from PaymentTransaction PT Join FeeType FT on PT.FeeTypeId=FT.FeeTypeId Join Programme PG on PT.ProgrammeId=PG.ProgrammeId where PT.isTransmitedToERP = 0", cnn);
-                        SqlDataReader dr = cmd.ExecuteReader();
-
-                        if (dr.HasRows)
-                        {
-                            List<PaymentProfile> Paids = new List<PaymentProfile>();
-
-                            try
-                            {
-                                while (dr.Read())
-                                {
-
-                                    PaymentProfile Paid = new PaymentProfile(); // Create a new instance in every loop iteration
-
-                                    if (!dr.IsDBNull(0))
-                                        Paid.Id = int.Parse(dr.GetValue(0).ToString());
-                                    if (!dr.IsDBNull(1))
-                                        Paid.PayerId = dr.GetString(1);
-                                    if (!dr.IsDBNull(2))
-                                        Paid.FullName = dr.GetString(2);
-
-                                    Paid.ProgrammeId = int.Parse(dr.GetValue(3).ToString());
-                                    Paid.Email = dr.GetString(4);
-                                    Paid.Amount = dr.GetValue(5).ToString();
-
-                                    Paid.PaymentReference = dr.GetString(7);
-                                    Paid.PaymentDescriptipon = dr.GetString(8);
-                                    Paid.PaymentChannel = dr.GetString(9);
-                                    Paid.SessionId = int.Parse(dr.GetValue(10).ToString());
-                                    Paid.SemesterId = int.Parse(dr.GetValue(11).ToString());
-                                    Paid.SessionSemester = dr.GetString(12);
-                                    Paid.PaymentDate = dr.GetDateTime(13).ToString("yyyy-MM-dd HH:mm:ss.fff");
-                                    Paid.FeeTypeCode = dr.GetString(14);
-                                    Paid.BankAccount = dr.GetString(15);
-                                    Paid.ItemCode = dr.GetString(16);
-
-                                    switch (Paid.FeeTypeCode.Trim().ToUpper())
-                                    {
-                                        case application:
-                                            Paid.CardCode = BPCodeApplicant;
-                                            break;
-                                        case masters:
-                                            Paid.CardCode = BPCodeMasters;
-                                            break;
-                                        case pg:
-                                            Paid.CardCode = BPCodePG;
-                                            break;
-                                        default:
-                                            Paid.CardCode = BPCodeMasters;
-                                            break;
-                                    }
-
-                                    switch (Paid.FeeTypeCode.Trim().ToUpper())
-                                    {
-                                        case "JHU-APPL":
-                                            Paid.ItemCode = dr.GetString(16).Trim().ToUpper();
-                                            break;
-                                        case "JHU-ACCP":
-                                            Paid.ItemCode = dr.GetString(17).Trim().ToUpper();
-                                            break;
-                                        case "JHU-TUIT":
-                                            Paid.ItemCode = dr.GetString(18).Trim().ToUpper();
-                                            break;
-                                        default:
-                                            Paid.ItemCode = dr.GetString(18).Trim().ToUpper();
-                                            break;
-                                    }
-
-                                    Paids.Add(Paid); // Add the newly created object to the list
-                                }
-                            }
-                            catch (Exception ex)
-                            {
-                                _log4net.Error($"Error reading payment transactions: {ex.Message}");
-                            }
-
-
-
-
-                            //if (dr.Read())
-                            //{
-                            //    List<PaymentProfile> Paids = new List<PaymentProfile>();
-
-                            //    if (dr.HasRows == true)
-                            //    {
-                            //        PaymentProfile Paid = new PaymentProfile();
-                            //        //err
-                            //        try
-                            //        {
-                            //            while (dr.Read() == true)
-                            //            {
-                            //                if (!dr.IsDBNull(0))
-                            //                {
-                            //                    Paid.Id = int.Parse(dr.GetValue(0).ToString());
-                            //                }
-                            //                if (!dr.IsDBNull(1))
-                            //                {
-                            //                    Paid.PayerId = dr.GetString(1);
-                            //                }
-                            //                if (!dr.IsDBNull(2))
-                            //                {
-                            //                    Paid.FullName = dr.GetString(2);
-                            //                }
-                            //                //Paid.Id = int.Parse(dr.GetValue(0).ToString());
-                            //                //Paid.PayerId = dr.GetString(1);
-                            //                //Paid.PaymentTransactionId = int.Parse(dr.GetValue(0).ToString());
-                            //                Paid.ProgrammeId = int.Parse(dr.GetValue(3).ToString());
-                            //                Paid.Email = dr.GetString(4); // It is not needed
-                            //                Paid.Amount = dr.GetValue(5).ToString();
-                            //                Paid.FeeTypeId = int.Parse(dr.GetValue(6).ToString());
-                            //                Paid.PaymentReference = dr.GetString(7);
-                            //                Paid.PaymentDescriptipon = dr.GetString(8);
-                            //                Paid.PaymentChannel = dr.GetString(9);
-                            //                Paid.SessionId = int.Parse(dr.GetValue(10).ToString());
-                            //                Paid.SemesterId = int.Parse(dr.GetValue(11).ToString());
-                            //                Paid.SessionSemester = dr.GetString(12);
-                            //                Paid.PaymentDate = dr.GetDateTime(13).ToString("yyyy-MM-dd HH:mm:ss.fff");
-                            //                Paid.FeeTypeCode = dr.GetString(14);
-                            //                Paid.BankAccount = dr.GetString(15);
-                            //                Paid.ItemCode = dr.GetString(16);
-
-                            //                switch (Paid.FeeTypeCode.Trim().ToUpper())
-                            //                {
-
-                            //                    case application:
-                            //                        Paid.CardCode = BPCodeApplicant;
-                            //                        break;
-
-                            //                    case masters:
-                            //                        Paid.CardCode = BPCodeMasters;
-                            //                        break;
-
-                            //                    case pg:
-                            //                        Paid.CardCode = BPCodePG;
-                            //                        break;
-
-                            //                    default:
-                            //                        Paid.CardCode = BPCodeMasters;
-                            //                        break;
-                            //                }
-
-
+        //private static void OldPaymentUpdateHandler(object? source)
+        //{
+
+        //    movingNum = long.Parse(DateTime.Now.ToString("yyyyMMddHHmm"));
+
+        //    var configBuilder = new ConfigurationBuilder().AddJsonFile("Settings.json").Build();
+
+        //    var configsession = configBuilder.GetSection("ConnectionString");
+
+        //    string connectionstring = configsession.GetSection("connectionstring").Value.Trim();
+
+
+        //    var ERPconfigsession = configBuilder.GetSection("ERPSettings");
+
+        //    string authenticationEndPoint = ERPconfigsession.GetSection("AuthRUL").Value.Trim();
+
+        //    string invoiceEndPoint = ERPconfigsession.GetSection("InvoiceEndPoint").Value.Trim();
+
+        //    string paymentEndPoint = ERPconfigsession.GetSection("PaymentEndPoint").Value.Trim();
+
+        //    string BPCodeApplicant = ERPconfigsession.GetSection("BPCodeApplicant").Value.Trim().ToUpper();
+        //    string BPCodeMasters = ERPconfigsession.GetSection("BPCodeMasters").Value.Trim().ToUpper();
+        //    string BPCodePG = ERPconfigsession.GetSection("BPCodePG").Value.Trim().ToUpper();
+
+        //    // BP Codes
+        //    const string application = "JHU-APPL";
+        //    const string masters = "JHU-TUIT";
+        //    const string pg = "JHU-PGDT";
+
+        //    try
+        //    {
+
+        //        //
+        //        SqlConnection cnn = new SqlConnection(connectionstring);
+        //        cnn.Open();
+        //        while (!isApplicationProcessing == false)
+        //        {
+        //            //
+        //            if (cnn.State == ConnectionState.Open)
+        //            {
+
+        //                // Stage 1 - Are there pain transactions
+        //                SqlCommand cmd = new SqlCommand($"Select PT.PaymentTransactionId,PT.PayerId, PT.FullName, PT.ProgrammeId,PT.Email,  PT.Amount, PT.FeeTypeId, PT.PaymentReference, PT.PaymentDescription, PT.PaymentChannel, PT.SessionId, PT.SemesterId, PT.SessionSemester, PT.PaymentDate, FT.FeeTypeCode,FT.BankAccount, PG.ApplicantBPCode, PG.ApplicantAcceptBPCode, PG.StudentBPCode from PaymentTransaction PT Join FeeType FT on PT.FeeTypeId=FT.FeeTypeId Join Programme PG on PT.ProgrammeId=PG.ProgrammeId where PT.isTransmitedToERP = 0", cnn);
+        //                SqlDataReader dr = cmd.ExecuteReader();
+
+        //                if (dr.HasRows)
+        //                {
+        //                    List<PaymentProfile> Paids = new List<PaymentProfile>();
+
+        //                    try
+        //                    {
+        //                        while (dr.Read())
+        //                        {
+
+        //                            PaymentProfile Paid = new PaymentProfile(); // Create a new instance in every loop iteration
+
+        //                            if (!dr.IsDBNull(0))
+        //                                Paid.Id = int.Parse(dr.GetValue(0).ToString());
+        //                            if (!dr.IsDBNull(1))
+        //                                Paid.PayerId = dr.GetString(1);
+        //                            if (!dr.IsDBNull(2))
+        //                                Paid.FullName = dr.GetString(2);
+
+        //                            Paid.ProgrammeId = int.Parse(dr.GetValue(3).ToString());
+        //                            Paid.Email = dr.GetString(4);
+        //                            Paid.Amount = dr.GetValue(5).ToString();
+
+        //                            Paid.PaymentReference = dr.GetString(7);
+        //                            Paid.PaymentDescriptipon = dr.GetString(8);
+        //                            Paid.PaymentChannel = dr.GetString(9);
+        //                            Paid.SessionId = int.Parse(dr.GetValue(10).ToString());
+        //                            Paid.SemesterId = int.Parse(dr.GetValue(11).ToString());
+        //                            Paid.SessionSemester = dr.GetString(12);
+        //                            Paid.PaymentDate = dr.GetDateTime(13).ToString("yyyy-MM-dd HH:mm:ss.fff");
+        //                            Paid.FeeTypeCode = dr.GetString(14);
+        //                            Paid.BankAccount = dr.GetString(15);
+        //                            Paid.ItemCode = dr.GetString(16);
+
+        //                            switch (Paid.FeeTypeCode.Trim().ToUpper())
+        //                            {
+        //                                case application:
+        //                                    Paid.CardCode = BPCodeApplicant;
+        //                                    break;
+        //                                case masters:
+        //                                    Paid.CardCode = BPCodeMasters;
+        //                                    break;
+        //                                case pg:
+        //                                    Paid.CardCode = BPCodePG;
+        //                                    break;
+        //                                default:
+        //                                    Paid.CardCode = BPCodeMasters;
+        //                                    break;
+        //                            }
+
+        //                            switch (Paid.FeeTypeCode.Trim().ToUpper())
+        //                            {
+        //                                case "JHU-APPL":
+        //                                    Paid.ItemCode = dr.GetString(16).Trim().ToUpper();
+        //                                    break;
+        //                                case "JHU-ACCP":
+        //                                    Paid.ItemCode = dr.GetString(17).Trim().ToUpper();
+        //                                    break;
+        //                                case "JHU-TUIT":
+        //                                    Paid.ItemCode = dr.GetString(18).Trim().ToUpper();
+        //                                    break;
+        //                                default:
+        //                                    Paid.ItemCode = dr.GetString(18).Trim().ToUpper();
+        //                                    break;
+        //                            }
 
-                            //                Paids.Add(Paid);
-                            //            }
-                            //        }
-                            //        catch (Exception ex)
-                            //        {
+        //                            Paids.Add(Paid); // Add the newly created object to the list
+        //                        }
+        //                    }
+        //                    catch (Exception ex)
+        //                    {
+        //                        _log4net.Error($"Error reading payment transactions: {ex.Message}");
+        //                    }
 
-                            //            throw;
-                            //        }
-                            //end err
 
+        //                    dr.Close();
+        //                    cmd.Dispose();
 
+        //                    // Stage 2 = login to the ERP if there is paid transactions to process
 
-                            dr.Close();
-                            cmd.Dispose();
+        //                    if (Paids.Count > 0)
+        //                    {
 
-                            // Stage 2 = login to the ERP if there is paid transactions to process
+        //                        //Stage 3, Login to the db is there is no login currently 
+        //                        // Loo=p through paid - 
 
-                            if (Paids.Count > 0)
-                            {
+        //                        var signinclient = new RestClient(authenticationEndPoint); // The Login endpoint
+        //                                                                                   // signinclient.Timeout = -1;
+        //                        var signinrequest = new RestRequest("", Method.POST);
 
-                                //Stage 3, Login to the db is there is no login currently 
-                                // Loo=p through paid - 
+        //                        ErpSignInBody signInBody = new ErpSignInBody();
+        //                        signInBody.UserName = ERPconfigsession.GetSection("UserName").Value.Trim();
+        //                        signInBody.Password = ERPconfigsession.GetSection("Passw").Value.Trim();
+        //                        signInBody.CompanyDB = ERPconfigsession.GetSection("CompanyDb").Value.Trim();
 
-                                var signinclient = new RestClient(authenticationEndPoint); // The Login endpoint
-                                                                                           // signinclient.Timeout = -1;
-                                var signinrequest = new RestRequest("", Method.POST);
+        //                        var signIn = System.Text.Json.JsonSerializer.Serialize(signInBody) + "\n" + @"";  // 
 
-                                ErpSignInBody signInBody = new ErpSignInBody();
-                                signInBody.UserName = ERPconfigsession.GetSection("UserName").Value.Trim();
-                                signInBody.Password = ERPconfigsession.GetSection("Passw").Value.Trim();
-                                signInBody.CompanyDB = ERPconfigsession.GetSection("CompanyDb").Value.Trim();
+        //                        // This block was used to supress the certificate authentication error
+        //                        System.Net.ServicePointManager.SecurityProtocol = System.Net.SecurityProtocolType.Tls | System.Net.SecurityProtocolType.Tls11 | System.Net.SecurityProtocolType.Tls12 | System.Net.SecurityProtocolType.Tls13;
+        //                        ServicePointManager.ServerCertificateValidationCallback += new System.Net.Security.RemoteCertificateValidationCallback(ValidateServerCertificate);
+        //                        ServicePointManager.ServerCertificateValidationCallback = (sender, certificate, chain, sslPolicyErrors) => true;
 
-                                var signIn = System.Text.Json.JsonSerializer.Serialize(signInBody) + "\n" + @"";  // 
 
-                                // This block was used to supress the certificate authentication error
-                                System.Net.ServicePointManager.SecurityProtocol = System.Net.SecurityProtocolType.Tls | System.Net.SecurityProtocolType.Tls11 | System.Net.SecurityProtocolType.Tls12 | System.Net.SecurityProtocolType.Tls13;
-                                ServicePointManager.ServerCertificateValidationCallback += new System.Net.Security.RemoteCertificateValidationCallback(ValidateServerCertificate);
-                                ServicePointManager.ServerCertificateValidationCallback = (sender, certificate, chain, sslPolicyErrors) => true;
+        //                        signinrequest.AddParameter("application/json", signIn, ParameterType.RequestBody);
+        //                        IRestResponse signinresponse = signinclient.Execute(signinrequest);
+        //                        _log4net.Info(signinresponse.Content.ToString());
 
+        //                        if (signinresponse.ResponseStatus == ResponseStatus.Completed)
+        //                        {
+        //                            // Prepare the invoice and send
 
-                                signinrequest.AddParameter("application/json", signIn, ParameterType.RequestBody);
-                                IRestResponse signinresponse = signinclient.Execute(signinrequest);
-                                _log4net.Info(signinresponse.Content.ToString());
+        //                            //string someJson = @"{ ""CardCode"":""" + BPCode + @""",""DocDate"":""" + docDate + @""",""NumAtCard"":""" + studentName + @""",""U_PortalInvoiceNo"":""" + invoicenumber + @""",""DocumentLines"": [{""LineNum"": " + 0 + @",""ItemCode"":""" + ItemCode + @""",""Quantity"": " + 1 + @", ""Price"": " + Convert.ToInt32(model.Amount) + @"}]}";
 
-                                if (signinresponse.ResponseStatus == ResponseStatus.Completed)
-                                {
-                                    // Prepare the invoice and send
 
-                                    //string someJson = @"{ ""CardCode"":""" + BPCode + @""",""DocDate"":""" + docDate + @""",""NumAtCard"":""" + studentName + @""",""U_PortalInvoiceNo"":""" + invoicenumber + @""",""DocumentLines"": [{""LineNum"": " + 0 + @",""ItemCode"":""" + ItemCode + @""",""Quantity"": " + 1 + @", ""Price"": " + Convert.ToInt32(model.Amount) + @"}]}";
+        //                            foreach (PaymentProfile payment in Paids)
+        //                            {
 
+        //                                // Stage 4, prepare invoice and push to erp and get responce
+        //                                lnNumber = lnNumber;
+        //                                if (lnNumber > 100)
+        //                                {
+        //                                    lnNumber = 1;
+        //                                }
 
-                                    foreach (PaymentProfile payment in Paids)
-                                    {
+        //                                movingNum = movingNum + 1;
 
-                                        // Stage 4, prepare invoice and push to erp and get responce
-                                        lnNumber = lnNumber;
-                                        if (lnNumber > 100)
-                                        {
-                                            lnNumber = 1;
-                                        }
 
-                                        movingNum = movingNum + 1;
+        //                                DocumentLines[] doc = new DocumentLines[1];
+        //                                doc[0] = new DocumentLines
+        //                                {
+        //                                    ItemCode = payment.ItemCode,
+        //                                    Quantity = 1,
+        //                                    Price = double.Parse(payment.Amount),
+        //                                    LineNum = lnNumber
+        //                                };
+        //                                //doc[0].Price = double.Parse(payment.Amount);
+        //                                //doc[0].Quantity = 1;
+        //                                //doc[0].LineNum = lnNumber;
+        //                                //doc[0].ItemCode = payment.ItemCode;
 
+        //                                // Switch Structure is hidden in the rejion bracket
+        //                                #region
 
-                                        DocumentLines[] doc = new DocumentLines[1];
-                                        doc[0] = new DocumentLines
-                                        {
-                                            ItemCode = payment.ItemCode,
-                                            Quantity = 1,
-                                            Price = double.Parse(payment.Amount),
-                                            LineNum = lnNumber
-                                        };
-                                        //doc[0].Price = double.Parse(payment.Amount);
-                                        //doc[0].Quantity = 1;
-                                        //doc[0].LineNum = lnNumber;
-                                        //doc[0].ItemCode = payment.ItemCode;
 
-                                        // Switch Structure is hidden in the rejion bracket
-                                        #region
+        //                                #endregion
 
+        //                                // Create the invoice
+        //                                // var docs = Array.Empty<DocumentLines>();
 
-                                        #endregion
+        //                                // docs.Append(doc);
 
-                                        // Create the invoice
-                                        // var docs = Array.Empty<DocumentLines>();
+        //                                PaymentInvoice invoice = new PaymentInvoice();
+        //                                invoice.NumAtCard = payment.FullName.Replace(',', ' ');
 
-                                        // docs.Append(doc);
+        //                                invoice.DocumentLines = doc;
+        //                                invoice.U_PortalInvoiceNo = $"JHU-{DateTime.Now.ToString("00yy")}-{payment.Id}"; //    $"JHU-{movingNum.ToString().Substring(0, 4)}-{movingNum.ToString().Substring(4, movingNum.ToString().Length - 4)}"; ; // to be handled
+        //                                invoice.CardCode = payment.CardCode;
 
-                                        PaymentInvoice invoice = new PaymentInvoice();
-                                        invoice.NumAtCard = payment.FullName.Replace(',', ' ');
+        //                                _log4net.Info($"Invoice Number: {invoice.U_PortalInvoiceNo} ----- Line Number={doc[0].LineNum} - Payer ID= {payment.PayerId}");
 
-                                        invoice.DocumentLines = doc;
-                                        invoice.U_PortalInvoiceNo = $"JHU-{DateTime.Now.ToString("00yy")}-{payment.Id}"; //    $"JHU-{movingNum.ToString().Substring(0, 4)}-{movingNum.ToString().Substring(4, movingNum.ToString().Length - 4)}"; ; // to be handled
-                                        invoice.CardCode = payment.CardCode;
 
-                                        _log4net.Info($"Invoice Number: {invoice.U_PortalInvoiceNo} ----- Line Number={doc[0].LineNum} - Payer ID= {payment.PayerId}");
 
+        //                                invoice.DocDate = DateTime.Parse(payment.PaymentDate).ToString("yyyy-MM-dd");// HH:mm:ss.fff");
 
+        //                                // Then serialize it
 
-                                        invoice.DocDate = DateTime.Parse(payment.PaymentDate).ToString("yyyy-MM-dd");// HH:mm:ss.fff");
+        //                                var invoiceData = System.Text.Json.JsonSerializer.Serialize(invoice) + "\n" + @"";  // 
 
-                                        // Then serialize it
+        //                                _log4net.Info(invoiceData);
 
-                                        var invoiceData = System.Text.Json.JsonSerializer.Serialize(invoice) + "\n" + @"";  // 
+        //                                var B1session = signinresponse.Cookies.Where(a => a.Name == "B1SESSION").Select(a => a.Value).FirstOrDefault();
+        //                                var RouteID = signinresponse.Cookies.Where(a => a.Name == "ROUTEID").Select(a => a.Value).FirstOrDefault();
+        //                                string cookie = "B1SESSION=" + B1session.ToString() + "; ROUTEID=" + RouteID.ToString();
 
-                                        _log4net.Info(invoiceData);
 
-                                        var B1session = signinresponse.Cookies.Where(a => a.Name == "B1SESSION").Select(a => a.Value).FirstOrDefault();
-                                        var RouteID = signinresponse.Cookies.Where(a => a.Name == "ROUTEID").Select(a => a.Value).FirstOrDefault();
-                                        string cookie = "B1SESSION=" + B1session.ToString() + "; ROUTEID=" + RouteID.ToString();
+        //                                //var B1session = "cecf3b76-4dc9-11ec-8000-005056010273";
+        //                                //var RouteID = signinresponse.Cookies.Where(a => a.Name == "ROUTEID").Select(a => a.Value).FirstOrDefault();
 
+        //                                //string cookie = "B1SESSION=" + B1session.ToString() + "; ROUTEID=" + RouteID.ToString();
 
-                                        //var B1session = "cecf3b76-4dc9-11ec-8000-005056010273";
-                                        //var RouteID = signinresponse.Cookies.Where(a => a.Name == "ROUTEID").Select(a => a.Value).FirstOrDefault();
 
-                                        //string cookie = "B1SESSION=" + B1session.ToString() + "; ROUTEID=" + RouteID.ToString();
+        //                                var invoiceclient = new RestClient(invoiceEndPoint);
+        //                                invoiceclient.Timeout = -1;
+        //                                var invoicerequest = new RestRequest(Method.POST); // It is a post request 
 
+        //                                invoicerequest.AddHeader("Content-Type", "application/json");
+        //                                //invoicerequest.AddHeader("Cookie", "B1SESSION=cecf3b76-4dc9-11ec-8000-005056010273; ROUTEID=.node8");
+        //                                invoicerequest.AddHeader("Cookie", "B1SESSION=" + B1session.ToString() + "; ROUTEID=" + RouteID.ToString());
+        //                                invoicerequest.AddCookie("B1SESSION", B1session.ToString());
+        //                                invoicerequest.AddCookie("ROUTEID", RouteID.ToString());
 
-                                        var invoiceclient = new RestClient(invoiceEndPoint);
-                                        invoiceclient.Timeout = -1;
-                                        var invoicerequest = new RestRequest(Method.POST); // It is a post request 
+        //                                invoicerequest.AddParameter("application/json", invoiceData, ParameterType.RequestBody);
+        //                                int bb = 2;
 
-                                        invoicerequest.AddHeader("Content-Type", "application/json");
-                                        //invoicerequest.AddHeader("Cookie", "B1SESSION=cecf3b76-4dc9-11ec-8000-005056010273; ROUTEID=.node8");
-                                        invoicerequest.AddHeader("Cookie", "B1SESSION=" + B1session.ToString() + "; ROUTEID=" + RouteID.ToString());
-                                        invoicerequest.AddCookie("B1SESSION", B1session.ToString());
-                                        invoicerequest.AddCookie("ROUTEID", RouteID.ToString());
+        //                                IRestResponse invoiceresponse = invoiceclient.Execute(invoicerequest);
 
-                                        invoicerequest.AddParameter("application/json", invoiceData, ParameterType.RequestBody);
-                                        int bb = 2;
+        //                                int aa = 2;
+        //                                _log4net.Info(invoiceresponse.Content);
 
-                                        IRestResponse invoiceresponse = invoiceclient.Execute(invoicerequest);
+        //                                string json = invoiceresponse.Content.ToString();
 
-                                        int aa = 2;
-                                        _log4net.Info(invoiceresponse.Content);
+        //                                var match = Regex.Match(json, "\"DocEntry\"\\s*:\\s*(\\d+)");
+        //                                int docEntry = 0;
+        //                                if (match.Success)
+        //                                {
+        //                                    docEntry = int.Parse(match.Groups[1].Value);
+        //                                    //Console.WriteLine(docEntry); // 277
+        //                                }
 
-                                        string json = invoiceresponse.Content.ToString();
 
-                                        var match = Regex.Match(json, "\"DocEntry\"\\s*:\\s*(\\d+)");
-                                        int docEntry = 0;
-                                        if (match.Success)
-                                        {
-                                            docEntry = int.Parse(match.Groups[1].Value);
-                                            //Console.WriteLine(docEntry); // 277
-                                        }
+        //                                if (invoiceresponse.ResponseStatus == ResponseStatus.Completed)
+        //                                {
+        //                                    // This means that the invoice was created successfully, then send the Payment - 
+        //                                    // string p = @"{ ""CardCode"":""" + BPCode + @""",""DocDate"":""" + docDate + @""",""U_CustName"":""" + studentName + @""",""U_PortalReceiptNo"":""" + paymentnumber + @""",""TransferAccount"" :""" + "123301" + @""",""TransferSum"" : " + Convert.ToInt32(model.Amount) + @",""PaymentInvoices"": [{""LineNum"": " + 0 + @",""InvoiceType"":""" + "it_Invoice" + @""",""DocEntry"": " + docEntry + @", ""SumApplied"": " + Convert.ToInt32(model.Amount) + @"}]}";
 
+        //                                    PaymentReceived received = new PaymentReceived();
 
-                                        if (invoiceresponse.ResponseStatus == ResponseStatus.Completed)
-                                        {
-                                            // This means that the invoice was created successfully, then send the Payment - 
-                                            // string p = @"{ ""CardCode"":""" + BPCode + @""",""DocDate"":""" + docDate + @""",""U_CustName"":""" + studentName + @""",""U_PortalReceiptNo"":""" + paymentnumber + @""",""TransferAccount"" :""" + "123301" + @""",""TransferSum"" : " + Convert.ToInt32(model.Amount) + @",""PaymentInvoices"": [{""LineNum"": " + 0 + @",""InvoiceType"":""" + "it_Invoice" + @""",""DocEntry"": " + docEntry + @", ""SumApplied"": " + Convert.ToInt32(model.Amount) + @"}]}";
+        //                                    PaymentInvoices individualInvoice = new PaymentInvoices();
 
-                                            PaymentReceived received = new PaymentReceived();
+        //                                    individualInvoice.SumApplied = invoice.DocumentLines[0].Price;
+        //                                    //individualInvoice.DocEntry = payment.FeeTypeId.ToString();
 
-                                            PaymentInvoices individualInvoice = new PaymentInvoices();
+        //                                    individualInvoice.DocEntry = docEntry.ToString();        //payment.FeeTypeId.ToString();
+        //                                    individualInvoice.InvoiceType = payment.FeeTypeCode;
+        //                                    individualInvoice.SumApplied = double.Parse(payment.Amount);
+        //                                    individualInvoice.LineNumber = invoice.DocumentLines[0].LineNum.ToString();
 
-                                            individualInvoice.SumApplied = invoice.DocumentLines[0].Price;
-                                            //individualInvoice.DocEntry = payment.FeeTypeId.ToString();
+        //                                    // Now we add in
+        //                                    received.PaymentInvoices = individualInvoice;
 
-                                            individualInvoice.DocEntry = docEntry.ToString();        //payment.FeeTypeId.ToString();
-                                            individualInvoice.InvoiceType = payment.FeeTypeCode;
-                                            individualInvoice.SumApplied = double.Parse(payment.Amount);
-                                            individualInvoice.LineNumber = invoice.DocumentLines[0].LineNum.ToString();
+        //                                    received.U_CustName = invoice.NumAtCard;
+        //                                    received.CardCode = invoice.CardCode;
+        //                                    received.TransferAccount = payment.BankAccount;
+        //                                    received.TransferSum = payment.Amount;
+        //                                    received.DocDate = DateTime.Parse(payment.PaymentDate).ToString("yyyy-MM-dd");
+        //                                    received.U_PortalReceiptNo = invoice.U_PortalInvoiceNo.Replace("JHU", "RPT");
 
-                                            // Now we add in
-                                            received.PaymentInvoices = individualInvoice;
 
-                                            received.U_CustName = invoice.NumAtCard;
-                                            received.CardCode = invoice.CardCode;
-                                            received.TransferAccount = payment.BankAccount;
-                                            received.TransferSum = payment.Amount;
-                                            received.DocDate = DateTime.Parse(payment.PaymentDate).ToString("yyyy-MM-dd");
-                                            received.U_PortalReceiptNo = invoice.U_PortalInvoiceNo.Replace("JHU", "RPT");
+        //                                    // We convert the received to JSON
 
+        //                                    var paymentData = System.Text.Json.JsonSerializer.Serialize(received) + "\n" + @"";
 
-                                            // We convert the received to JSON
+        //                                    _log4net.Info(paymentData);
 
-                                            var paymentData = System.Text.Json.JsonSerializer.Serialize(received) + "\n" + @"";
+        //                                    var paymentclient = new RestClient(paymentEndPoint);
+        //                                    paymentclient.Timeout = -1;
+        //                                    var paymentrequest = new RestRequest(Method.POST);
+        //                                    paymentrequest.AddHeader("Content-Type", "application/json");
+        //                                    //invoicerequest.AddHeader("Cookie", "B1SESSION=cecf3b76-4dc9-11ec-8000-005056010273; ROUTEID=.node8");
+        //                                    paymentrequest.AddHeader("Cookie", "B1SESSION=" + B1session.ToString() + "; ROUTEID=" + RouteID.ToString());
+        //                                    paymentrequest.AddCookie("B1SESSION", B1session.ToString());
+        //                                    paymentrequest.AddCookie("ROUTEID", RouteID.ToString());
 
-                                            _log4net.Info(paymentData);
+        //                                    paymentrequest.AddParameter("application/json", paymentData, ParameterType.RequestBody);
+        //                                    IRestResponse paymentresponse = paymentclient.Execute(paymentrequest);
 
-                                            var paymentclient = new RestClient(paymentEndPoint);
-                                            paymentclient.Timeout = -1;
-                                            var paymentrequest = new RestRequest(Method.POST);
-                                            paymentrequest.AddHeader("Content-Type", "application/json");
-                                            //invoicerequest.AddHeader("Cookie", "B1SESSION=cecf3b76-4dc9-11ec-8000-005056010273; ROUTEID=.node8");
-                                            paymentrequest.AddHeader("Cookie", "B1SESSION=" + B1session.ToString() + "; ROUTEID=" + RouteID.ToString());
-                                            paymentrequest.AddCookie("B1SESSION", B1session.ToString());
-                                            paymentrequest.AddCookie("ROUTEID", RouteID.ToString());
+        //                                    _log4net.Info(paymentresponse.Content);
 
-                                            paymentrequest.AddParameter("application/json", paymentData, ParameterType.RequestBody);
-                                            IRestResponse paymentresponse = paymentclient.Execute(paymentrequest);
+        //                                    if (paymentresponse.ResponseStatus == ResponseStatus.Completed && paymentresponse.Content.Contains("error") == false)
+        //                                    {
 
-                                            _log4net.Info(paymentresponse.Content);
+        //                                        //cmd = new SqlCommand($"Update PaymentTransaction set isTransmitedToERP=1 where PaymentTransactionId ={payment.Id}", cnn);
+        //                                        cmd = new SqlCommand($"Update PaymentTransaction set isTransmitedToERP=1 where PaymentTransactionId ={payment.Id}", cnn);
+        //                                        cmd.ExecuteNonQuery();
+        //                                        cmd.Dispose();
 
-                                            if (paymentresponse.ResponseStatus == ResponseStatus.Completed && paymentresponse.Content.Contains("error") == false)
-                                            {
+        //                                        // Update the database : Payment Transaction Table, set isTransmittedToERP = 1 for the payment.Id field
 
-                                                //cmd = new SqlCommand($"Update PaymentTransaction set isTransmitedToERP=1 where PaymentTransactionId ={payment.Id}", cnn);
-                                                cmd = new SqlCommand($"Update PaymentTransaction set isTransmitedToERP=1 where PaymentTransactionId ={payment.Id}", cnn);
-                                                cmd.ExecuteNonQuery();
-                                                cmd.Dispose();
+        //                                    }
+        //                                    else
+        //                                    {
+        //                                        Thread.Sleep(12000);
+        //                                    }
 
-                                                // Update the database : Payment Transaction Table, set isTransmittedToERP = 1 for the payment.Id field
 
-                                            }
-                                            else
-                                            {
-                                                Thread.Sleep(12000);
-                                            }
+        //                                }
 
+        //                            }
 
-                                        }
+        //                            // Stage 5, push payment to the invoice 
 
-                                    }
+        //                            // Stage 6, update the PaymentTransaction Table
 
-                                    // Stage 5, push payment to the invoice 
+        //                        }
 
-                                    // Stage 6, update the PaymentTransaction Table
 
-                                }
+        //                    }
+        //                    else
+        //                    {
+        //                        cnn.Dispose();
+        //                        cnn = new SqlConnection(connectionstring);
+        //                        cnn.Open();
 
+        //                        Thread.Sleep(2000);
+        //                        _log4net.Info("The database reconnected");
 
-                            }
-                            else
-                            {
-                                cnn.Dispose();
-                                cnn = new SqlConnection(connectionstring);
-                                cnn.Open();
+        //                    }
 
-                                Thread.Sleep(2000);
-                                _log4net.Info("The database reconnected");
+        //                }
 
-                            }
+        //            }
 
-                        }
 
-                    }
+        //            // Try end
 
+        //        }
+        //    }
+        //    catch (Exception ex)
+        //    {
+        //        _log4net.Error(ex.Message);
+        //        Thread.Sleep(12000);
+        //    }
 
-                    // Try end
-
-                }
-            }
-            catch (Exception ex)
-            {
-                _log4net.Error(ex.Message);
-                Thread.Sleep(12000);
-            }
-
-        }
+        //}
 
 
 
@@ -3120,6 +3115,8 @@
         /// <returns></returns>
         private static bool ValidateServerCertificate(object sender, X509Certificate? certificate, X509Chain? chain, SslPolicyErrors sslPolicyErrors)
         {
+
+
             return true;
         }
 
