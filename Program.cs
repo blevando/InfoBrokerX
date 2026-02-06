@@ -98,12 +98,12 @@
 
             //Payment - Step 1
             InvoiceProcessor = new Thread(new ParameterizedThreadStart(InvoiceProcessorHandler));
-            //InvoiceProcessor.Start();
+            InvoiceProcessor.Start();
             Interlocked.Increment(ref threadCount);
 
             //Payment - 2
             PaymentProcessor = new Thread(new ParameterizedThreadStart(PaymentProcessorHandler));
-            //PaymentProcessor.Start();
+            PaymentProcessor.Start();
             Interlocked.Increment(ref threadCount);
 
             //Payment - 3
@@ -423,6 +423,7 @@
         private static string? ProcessInvoiceTransaction(PTrans paymentTrans)
         {
             string? invoiceNumber = null;
+            string CardCode = "";
             DocumentLines[] doc = new DocumentLines[1];
             try
             {
@@ -522,7 +523,7 @@
 
                             //string someJson = @"{ ""CardCode"":""" + BPCode + @""",""DocDate"":""" + docDate + @""",""NumAtCard"":""" + studentName + @""",""U_PortalInvoiceNo"":""" + invoicenumber + @""",""DocumentLines"": [{""LineNum"": " + 0 + @",""ItemCode"":""" + ItemCode + @""",""Quantity"": " + 1 + @", ""Price"": " + Convert.ToInt32(model.Amount) + @"}]}";
 
-                            string CardCode = "";
+
                             switch (paymentTrans.FeeTypeCode.Trim().ToUpper())
                             {
                                 case application:
@@ -598,7 +599,8 @@
                                 ItemCode = ItemCode,
                                 Quantity = 1,
                                 Price = Math.Round(double.Parse(requiredAmount), 2),
-                                LineNum = lnNumber
+                                LineNum = 0,//lnNumber - it always starts with 0 because we are creating one invoice line per transaction, if there are multiple transactions for the same student, they will be posted as payment against the same invoice number
+                                UoMEntry = 1
                             };
 
 
@@ -712,7 +714,7 @@
 
                     // Post the payment against the invoice number
 
-                    cmd = new SqlCommand("Insert into [PaymentInstallment] ([InvoiceNumber],[InstallmentNumber],[Amount],[PaymentDate],[PaymentCode],[PaymentReference],[BankAccount],[PostStatus]) values (@InvoiceNumber, @InstallmentNumber, @Amount, @PaymentDate,@PaymentCode,@PaymentReference, @BankAccount, @PostStatus)", con);
+                    cmd = new SqlCommand("Insert into [PaymentInstallment] ([InvoiceNumber],[InstallmentNumber],[Amount],[PaymentDate],[CardCode],[PaymentCode],[PaymentReference],[BankAccount],[PostStatus]) values (@InvoiceNumber, @InstallmentNumber, @Amount, @PaymentDate,@CardCode,@PaymentCode,@PaymentReference, @BankAccount, @PostStatus)", con);
 
                     // @InvoiceNumber, @InstallmentNumber, @Amount, @PaymentDate,@PaymentCode,@PaymentReference
 
@@ -720,6 +722,7 @@
                     cmd.Parameters.AddWithValue("@InstallmentNumber", lnNumber);
                     cmd.Parameters.AddWithValue("@Amount", paymentTrans.Amount);
                     cmd.Parameters.AddWithValue("@PaymentDate", paymentTrans.PaymentDate);
+                    cmd.Parameters.AddWithValue("@CardCode", CardCode);
                     cmd.Parameters.AddWithValue("@PaymentCode", doc[0].ItemCode); //verify                  
                     cmd.Parameters.AddWithValue("@PaymentReference", paymentTrans.PaymentReference);
                     cmd.Parameters.AddWithValue("@BankAccount", paymentTrans.BankAccount);
@@ -786,7 +789,8 @@
                                 Dictionary<long, string> dictionary = new Dictionary<long, string>();
                                 foreach (string invoiceNumber in invoiceNumbers)
                                 {
-                                    cmd = new SqlCommand($"Select [InstallmentNumber], [Amount], [PaymentDate],[PaymentCode],[PaymentReference], [CustomerName],[InvoiceNumber], [Id] from [PaymentInstallment] where [PostStatus]=0", con);
+                                    cmd = new SqlCommand(@$"Select P.InstallmentNumber, P.Amount, P.PaymentDate,P.CardCode,P.PaymentReference, CONCAT(I.MatricNumber, '-', I.LastName, '-',I.FirstName) as CustomerName,I.InvoiceCode,  P.InvoiceNumber, P.Id,P.PaymentCode,P.BankAccount 
+                                                        from [PaymentInstallment] P Join InvoiceTransactions I on P.InvoiceNumber=I.InvoiceNumber where P.PostStatus=0", con);
                                     reader = cmd.ExecuteReader();
                                     if (reader.HasRows == true)
                                     {
@@ -831,13 +835,15 @@
                                                 paymentTrans.InstallmentNumber = reader.IsDBNull(0) ? 0 : int.Parse(reader.GetValue(0).ToString());
                                                 paymentTrans.Amount = reader.IsDBNull(1) ? 0 : decimal.Parse(reader.GetValue(1).ToString());
                                                 paymentTrans.PaymentDate = reader.IsDBNull(2) ? DateTime.MinValue : DateTime.Parse(reader.GetValue(2).ToString());
-                                                paymentTrans.PaymentCode = reader.IsDBNull(3) ? "" : reader.GetString(3).ToString();
+                                                paymentTrans.CardCode = reader.IsDBNull(3) ? "" : reader.GetString(3).ToString(); //CardCode
                                                 paymentTrans.PaymentReference = reader.IsDBNull(4) ? "" : reader.GetString(4).ToString();
                                                 paymentTrans.CustomerName = reader.IsDBNull(5) ? "" : reader.GetString(5).ToString();
                                                 paymentTrans.PortalReceiptNo = reader.IsDBNull(6) ? "" : reader.GetString(6).ToString();
                                                 paymentTrans.InvoiceNumber = reader.IsDBNull(7) ? "" : reader.GetString(7).ToString();
                                                 // Post Payment against Invoice Number
                                                 long imtId = reader.IsDBNull(8) ? 0 : long.Parse(reader.GetValue(8).ToString());
+                                                paymentTrans.PaymentCode = reader.IsDBNull(9) ? "" : reader.GetString(9).ToString(); //Invoice Type
+                                                paymentTrans.BankAccount = reader.IsDBNull(10) ? "" : reader.GetString(10).ToString();
                                                 reader.Close();
                                                 cmd.Dispose();
 
@@ -862,11 +868,14 @@
                                                 received.PaymentInvoices = individualInvoice;
 
                                                 received.U_CustName = paymentTrans.CustomerName;
-                                                received.CardCode = paymentTrans.PaymentCode;
+                                                received.CardCode = paymentTrans.CardCode;
                                                 received.TransferAccount = paymentTrans.BankAccount;
                                                 received.TransferSum = individualInvoice.SumApplied.ToString();
                                                 received.DocDate = DateTime.Parse(paymentTrans.PaymentDate.ToString()).ToString("yyyy-MM-dd");
                                                 received.U_PortalReceiptNo = paymentTrans.PortalReceiptNo.Replace("JHU", "RPT");
+                                                //========================
+
+
 
 
                                                 // We convert the received to JSON
@@ -899,14 +908,47 @@
                                                     // Posting payment against invoice was successful
                                                     //We can not update the installment payment and the invoice transaction itself itself
 
+
+
                                                     //Payment first
                                                     dictionary.Add(imtId, invoiceNumber);
+
+                                                    // hh
+                                                    cmd.Dispose();
+                                                    if (dictionary.Count > 0)
+                                                    {
+                                                        foreach (var item in dictionary)
+                                                        {
+                                                            SqlCommand cmd1 = new SqlCommand($"update [PaymentInstallment] set [PostStatus] = 1 where [Id] = {item.Key} and [InvoiceNumber] = '{item.Value}'", con);
+                                                            cmd1.ExecuteNonQuery();
+                                                            cmd1.Dispose();
+                                                            string qry = $"UPDATE i SET PaymentStatus =" +
+                                                                $"CASE " +
+                                                                    $" WHEN p.TotalPaid = 0 THEN  {(int)PaymentStatusEnum.UnPaid}" +
+                                                                    $" WHEN p.TotalPaid = i.TotalAmount THEN  {(int)PaymentStatusEnum.Paid}" +
+                                                                    $" WHEN p.TotalPaid < i.TotalAmount THEN  {(int)PaymentStatusEnum.PartiallyPaid}" +
+                                                                    $" ELSE  {(int)PaymentStatusEnum.OverPaid}" +
+                                                                $" END" +
+                                                                $" FROM InvoiceTransactions i JOIN (SELECT InvoiceNumber, SUM(Amount) As TotalPaid" +
+                                                                $" FROM PaymentInstallment" +
+                                                                $" GROUP BY InvoiceNumber) p" +
+                                                                $" ON p.InvoiceNumber = i.InvoiceNumber" +
+                                                                $" WHERE p.InvoiceNumber ={item.Value}";
+
+                                                            cmd1 = new SqlCommand(qry, con);
+                                                            cmd1.ExecuteNonQuery();
+                                                            cmd1.Dispose();
+                                                        }
+                                                    }
+
+
 
 
                                                 }
 
-
                                             }
+                                            reader.Close();
+                                            cmd.Dispose();
                                         }
                                     }
 
@@ -914,53 +956,7 @@
 
                                 }
 
-                                // hh
-                                cmd.Dispose();
-                                if (dictionary.Count > 0)
-                                {
-                                    foreach (var item in dictionary)
-                                    {
-                                        cmd = new SqlCommand($"update [PaymentInstallment] set [PostStatus] = 1 where [Id] = {item.Key} and [InvoiceNumber] = '{item.Value}'", con);
-                                        cmd.ExecuteNonQuery();
-                                        cmd.Dispose();
 
-                                        string qry = $"UPDATE i SET PaymentStatus =" +
-                                            $"CASE " +
-                                                $"WHEN p.TotalPaid = 0 THEN {(int)PaymentStatusEnum.UnPaid}" +
-                                                $"WHEN p.TotalPaid = i.TotalAmount THEN {(int)PaymentStatusEnum.Paid}" +
-                                                $"WHEN p.TotalPaid < i.TotalAmount THEN {(int)PaymentStatusEnum.PartiallyPaid}" +
-                                                $"ELSE {(int)PaymentStatusEnum.OverPaid}" +
-                                            $"END" +
-                                            $" FROM InvoiceTransactions i JOIN (SELECT InvoiceNumber, SUM(Amount) As TotalPaid" +
-                                            $" FROM PaymentInstallment" +
-                                            $" GROUP BY InvoiceNumber) p" +
-                                            $" ON p.InvoiceNumber = i.InvoiceNumber" +
-                                            $"WHERE p.InvoiceNumber ={item.Value}";
-
-
-                                        //string qry = $@"UPDATE i
-                                        //                SET PaymentStatus =
-                                        //                    CASE
-                                        //                        WHEN p.TotalPaid IS NULL OR p.TotalPaid = 0 THEN {(int)PaymentStatusEnum.UnPaid}
-                                        //                        WHEN p.TotalPaid = i.TotalAmount THEN {(int)PaymentStatusEnum.Paid}
-                                        //                        WHEN p.TotalPaid < i.TotalAmount THEN {(int)PaymentStatusEnum.PartiallyPaid}
-                                        //                        WHEN p.TotalPaid > i.TotalAmount THEN {(int)PaymentStatusEnum.OverPaid}
-                                        //                    END
-                                        //                FROM InvoiceTransactions i
-                                        //                LEFT JOIN (
-                                        //                    SELECT InvoiceNumber, SUM(Amount) AS TotalPaid
-                                        //                    FROM PaymentInstallment
-                                        //                    GROUP BY InvoiceNumber
-                                        //                ) p ON p.InvoiceNumber = i.InvoiceNumber
-                                        //                WHERE i.InvoiceNumber = {item.Value}";
-
-
-                                        cmd = new SqlCommand(qry, con);
-                                        cmd.ExecuteNonQuery();
-                                        cmd.Dispose();
-
-                                    }
-                                }
                             }
 
 
@@ -2625,6 +2621,7 @@
 
                                         var match = Regex.Match(json, "\"DocEntry\"\\s*:\\s*(\\d+)");
                                         int docEntry = 0;
+
                                         if (match.Success)
                                         {
                                             docEntry = int.Parse(match.Groups[1].Value);
