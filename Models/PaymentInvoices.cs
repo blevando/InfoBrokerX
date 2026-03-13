@@ -6,9 +6,9 @@ using System.Threading.Tasks;
 
 namespace InfoBroker.Models
 {
-    public class PaymentInvoices
+    public class PaymentLine
     {
-        public string LineNumber { get; set; }
+        public string LineNum { get; set; }
         public string InvoiceType { get; set; }
         public string DocEntry { get; set; }
         public double SumApplied { get; set; }

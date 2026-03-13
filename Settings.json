@@ -77,7 +77,7 @@
   //"UserName": "eduportal",
   //"Passw": "Pass@123",
   //"CompanyDb": "JHUTEST",
-  //"I nvoiceEndPoint": "https://41.138.161.33:50000/b  1s/v1/Invoices",
+  //"I nvoiceEndPoint": "https://41.138.161.33:50000/b1s/v1/Invoices",
   //"PaymentEndPoint": "https://41.138.161.33:50000/b1s/v1/IncomingPayments"
 
   "ERPSettings": {
@@ -93,7 +93,7 @@
     "PaymentEndPoint": "https://41.138.161.33:50000/b1s/v1/IncomingPayments",
     "InvoiceTransactionQueue": "JHUInvoiceTransaction", 
     "PaymentInstallment": "JHUPaymentInstallment"
-
+    
   },
   "AppSettings": {
 

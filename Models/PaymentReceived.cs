@@ -36,7 +36,9 @@ namespace InfoBroker.Models
         /// </summary>
         public string TransferSum { get; set; }
 
-        public  PaymentInvoices PaymentInvoices { get; set; }
+        
+        public  List<PaymentLine> PaymentInvoices { get; set; }
 
     }
+     
 }

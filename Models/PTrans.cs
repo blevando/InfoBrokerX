@@ -46,5 +46,7 @@ namespace InfoBroker.Models
 
         public string? StudentBPCode { get; set; }
 
+        public string? OrderNumber { get; set; }
+
     }
 }
